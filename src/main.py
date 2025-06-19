@@ -26,8 +26,7 @@ from luma.core.render import canvas
 # --- Global Font Definitions (Loaded once) ---
 font = None
 fontBold = None
-fontBoldTall = None
-fontBoldLarge = None
+FONT_SIZE = 10
 
 
 def make_Font(name, size):
@@ -37,11 +36,9 @@ def make_Font(name, size):
 
 def initialize_fonts():
     """Initializes all required fonts."""
-    global font, fontBold, fontBoldTall, fontBoldLarge
-    font = make_Font("Dot Matrix Regular.ttf", 10)
-    fontBold = make_Font("Dot Matrix Bold.ttf", 10)
-    fontBoldTall = make_Font("Dot Matrix Bold Tall.ttf", 10)
-    fontBoldLarge = make_Font("Dot Matrix Bold.ttf", 20)
+    global font, fontBold
+    font = make_Font("Dot Matrix Regular.ttf", FONT_SIZE)
+    fontBold = make_Font("Dot Matrix Bold.ttf", FONT_SIZE)
 
 
 def draw_centered_text_rows(
@@ -99,17 +96,22 @@ def draw_initial_display(display, station):
     draw_centered_text_rows(display, rows, fontBold, fill_color="yellow", row_spacing=3)
 
 
-def draw_departure_board(display, arrivals):
+def draw_departure_board(
+    display, arrivals, xoffset=15, row_height=12, space_num_destination=13, yoffset=5
+):
     with canvas(display) as draw:
         for row_num, arrival in enumerate(arrivals):
+            ypos = row_num * row_height + yoffset
+            if ypos >= display.height - FONT_SIZE:
+                break
             draw.text(
-                (15, ((row_num - 1) * 12) + 5),
-                text=str(row_num),
+                (xoffset, ypos),
+                text=str(row_num + 1),
                 font=font,
                 fill="yellow",
             )
             draw.text(
-                (28, ((row_num - 1) * 12) + 5),
+                (xoffset + space_num_destination, ypos),
                 text=arrival["destination"],
                 font=font,
                 fill="yellow",
@@ -155,7 +157,7 @@ def get_lines_filter(lines):
     return filter_set
 
 
-def get_arrivals(station, filter, n=5):
+def get_arrivals(station, filter, n=7):
 
     try:
 
