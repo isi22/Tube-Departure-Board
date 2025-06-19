@@ -5,6 +5,8 @@ import sys  # Import sys to check platform
 import requests
 import json
 from datetime import datetime
+import math
+import pytz
 
 # Conditional imports for display driver vs. emulator
 if sys.platform.startswith("linux") and os.uname().machine.startswith("arm"):
@@ -26,7 +28,7 @@ from luma.core.render import canvas
 # --- Global Font Definitions (Loaded once) ---
 font = None
 fontBold = None
-FONT_SIZE = 20
+FONT_SIZE = 10
 
 
 def make_Font(name, size):
@@ -96,6 +98,28 @@ def draw_initial_display(display, station):
     draw_centered_text_rows(display, rows, fontBold, fill_color="yellow", row_spacing=3)
 
 
+def get_time_to_arrival(arrival, font):
+    """Calculates the time to arrival and formats it for display."""
+
+    seconds_to_arrival = int(arrival["arrival_time"].timestamp() - time.time())
+    minutes_to_arrival = seconds_to_arrival / 60
+    # print(minutes_to_arrival)
+
+    # Format the time string
+    if minutes_to_arrival > 1:
+        time_to_arrival = (
+            f"{math.floor(minutes_to_arrival + 0.5)} min"
+            + "   "
+            + str(arrival["arrival_time"])
+        )
+    else:
+        time_to_arrival = "due" + "   " + str(arrival["arrival_time"])
+
+    bbox = font.getbbox(time_to_arrival)
+    time_width = bbox[2] - bbox[0]
+    return time_to_arrival, time_width
+
+
 def draw_departure_board(
     display,
     arrivals,
@@ -104,8 +128,11 @@ def draw_departure_board(
     space_num_destination=13,
     top_yoffset=5,
 ):
+
     with canvas(display) as draw:
         for row_num, arrival in enumerate(arrivals):
+
+            time_to_arrival, time_width = get_time_to_arrival(arrival, font)
             ypos = row_num * (FONT_SIZE + row_padding) + top_yoffset
             if ypos >= display.height - FONT_SIZE:
                 break
@@ -118,6 +145,12 @@ def draw_departure_board(
             draw.text(
                 (xoffset + space_num_destination, ypos),
                 text=arrival["destination"],
+                font=font,
+                fill="yellow",
+            )
+            draw.text(
+                (display.width - time_width - xoffset, ypos),
+                text=time_to_arrival,
                 font=font,
                 fill="yellow",
             )
@@ -186,6 +219,8 @@ def get_arrivals(station, filter, n=7):
             key=lambda p: p.get("timeToStation", float("inf")),
         )
 
+        # print(filtered_sorted_arrivals)
+
         final_display_info = []
 
         for arrival in filtered_sorted_arrivals[:n]:  # Take only the top n
@@ -193,12 +228,13 @@ def get_arrivals(station, filter, n=7):
             destination = destination if destination else "Unknown Destination"
 
             expected_arrival_utc_str = arrival.get("expectedArrival")
-            arrival_time_display = "N/A"  # Default display string
 
             if expected_arrival_utc_str:
                 arrival_dt = datetime.strptime(
                     expected_arrival_utc_str, "%Y-%m-%dT%H:%M:%SZ"
                 )
+                utc_timezone = pytz.utc
+                arrival_dt = arrival_dt.replace(tzinfo=utc_timezone)
 
             final_display_info.append(
                 {
@@ -261,6 +297,7 @@ def main():
                 arrivals2 = get_arrivals(station, lines2_filter)
                 last_refresh = time.time()
             draw_departure_board(display, arrivals1)
+            time.sleep(0.5)
 
     except Exception as e:
         print(f"An error occurred: {e}")
