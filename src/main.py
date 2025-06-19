@@ -144,7 +144,6 @@ def main():
                 rotate=config.displayRotation,
             )
 
-        print(display.height)
         station = get_station_id()
 
         draw_initial_display(display, station)
