@@ -26,7 +26,7 @@ from luma.core.render import canvas
 # --- Global Font Definitions (Loaded once) ---
 font = None
 fontBold = None
-FONT_SIZE = 10
+FONT_SIZE = 20
 
 
 def make_Font(name, size):
@@ -97,11 +97,16 @@ def draw_initial_display(display, station):
 
 
 def draw_departure_board(
-    display, arrivals, xoffset=15, row_height=12, space_num_destination=13, yoffset=5
+    display,
+    arrivals,
+    xoffset=15,
+    row_padding=3,
+    space_num_destination=13,
+    top_yoffset=5,
 ):
     with canvas(display) as draw:
         for row_num, arrival in enumerate(arrivals):
-            ypos = row_num * row_height + yoffset
+            ypos = row_num * (FONT_SIZE + row_padding) + top_yoffset
             if ypos >= display.height - FONT_SIZE:
                 break
             draw.text(
