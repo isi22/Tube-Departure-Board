@@ -103,12 +103,15 @@ def draw_departure_board(display, arrivals):
     with canvas(display) as draw:
         for row_num, arrival in enumerate(arrivals):
             draw.text(
-                (0, ((row_num - 1) * 14)), text=str(row_num), font=font, fill="yellow"
+                (5, ((row_num - 1) * 14) + 5),
+                text=str(row_num),
+                font=fontBold,
+                fill="yellow",
             )
             draw.text(
-                (10, ((row_num - 1) * 14)),
+                (18, ((row_num - 1) * 14) + 5),
                 text=arrival["destination"],
-                font=font,
+                font=fontBold,
                 fill="yellow",
             )
 
