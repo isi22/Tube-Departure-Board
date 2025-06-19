@@ -3,6 +3,8 @@ import os
 import time
 import sys  # Import sys to check platform
 import requests
+import json
+from datetime import datetime
 
 # Conditional imports for display driver vs. emulator
 if sys.platform.startswith("linux") and os.uname().machine.startswith("arm"):
@@ -12,11 +14,11 @@ if sys.platform.startswith("linux") and os.uname().machine.startswith("arm"):
 
     IS_RASPBERRY_PI = True
 else:
-
     # Running on a non-Pi (e.g., desktop for emulation)
-    from luma.emulator.device import capture
+    from luma.emulator.device import pygame  # Import the pygame emulator
 
     IS_RASPBERRY_PI = False
+
 
 from PIL import ImageFont, ImageDraw, Image
 from luma.core.render import canvas
@@ -97,7 +99,21 @@ def draw_initial_display(display, station):
     draw_centered_text_rows(display, rows, fontBold, fill_color="yellow", row_spacing=3)
 
 
-def query_TFL(url: str, params: dict, max_retries: int = 3):
+def draw_departure_board(display, arrivals):
+    with canvas(display) as draw:
+        for row_num, arrival in enumerate(arrivals):
+            draw.text(
+                (0, ((row_num - 1) * 14)), text=str(row_num), font=font, fill="yellow"
+            )
+            draw.text(
+                (10, ((row_num - 1) * 14)),
+                text=arrival["destination"],
+                font=font,
+                fill="yellow",
+            )
+
+
+def query_TFL(url: str, params: dict = None, max_retries: int = 3):
 
     for retry_attempt in range(max_retries):
         try:
@@ -123,8 +139,78 @@ def get_station_id():
     }
 
     response = query_TFL(TFL_STOPPOINT_SEARCH_URL, params)
-    print(response)
     return {"id": response["matches"][0]["id"], "name": response["matches"][0]["name"]}
+
+
+def get_lines_filter(lines):
+    filter_set = set()
+    for entry in lines:
+        line = entry["line"]
+        direction = entry["direction"]
+        if line and direction:
+            filter_set.add((line.lower(), direction.lower()))
+    return filter_set
+
+
+def get_arrivals(station, filter, n=5):
+
+    try:
+
+        TFL_STOPPOINT_ARRIVALS_URL = (
+            "https://api.tfl.gov.uk/StopPoint/" + station["id"] + "/Arrivals"
+        )  # TFL API endpoint for arrival predictions for a specific stop point
+
+        all_arrivals = query_TFL(TFL_STOPPOINT_ARRIVALS_URL)
+
+        filtered_arrivals = [
+            p
+            for p in all_arrivals
+            if (
+                (p.get("lineName", "").lower(), p.get("direction", "").lower())
+                in filter
+            )
+        ]
+
+        filtered_sorted_arrivals = sorted(
+            filtered_arrivals,
+            key=lambda p: p.get("timeToStation", float("inf")),
+        )
+
+        final_display_info = []
+
+        for arrival in filtered_sorted_arrivals[:n]:  # Take only the top n
+            destination = arrival.get("towards") or arrival.get("destinationName")
+            destination = destination if destination else "Unknown Destination"
+
+            expected_arrival_utc_str = arrival.get("expectedArrival")
+            arrival_time_display = "N/A"  # Default display string
+
+            if expected_arrival_utc_str:
+                arrival_dt = datetime.strptime(
+                    expected_arrival_utc_str, "%Y-%m-%dT%H:%M:%SZ"
+                )
+
+            final_display_info.append(
+                {
+                    "destination": destination,
+                    "arrival_time": arrival_dt,  # Formatted time string
+                }
+            )
+
+        # --- Print the final results ---
+        print(f"\n--- Final Top {n} Soonest Arrivals ---")
+        if not final_display_info:
+            print("No matching arrivals found to display.")
+        else:
+            for i, info in enumerate(final_display_info):
+                print(
+                    f"[{i+1}] To: {info['destination']}, Arriving: {info['arrival_time']}"
+                )
+
+        return final_display_info
+
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
 
 
 def main():
@@ -138,21 +224,33 @@ def main():
             display = ssd1322(serial, rotate=config.displayRotation)
         else:
             # For emulation or non-Pi platforms, use the capture device
-            display = capture(
+            display = pygame(
                 width=256,
                 height=64,
                 rotate=config.displayRotation,
             )
+            display.show()  # Show the emulator window
 
         station = get_station_id()
+        lines1_filter = get_lines_filter(config.lines1)
+        lines2_filter = get_lines_filter(config.lines2)
+
+        arrivals1 = get_arrivals(station, lines1_filter)
+        arrivals2 = get_arrivals(station, lines2_filter)
 
         draw_initial_display(display, station)
 
         # Keep the display updated (or running)
         print("Display initialized. Running...")
 
+        last_refresh = time.time()
+
         while True:
-            time.sleep(1)  # Keep script alive
+            if time.time() - last_refresh > config.refresh_interval:
+                arrivals1 = get_arrivals(station, lines1_filter)
+                arrivals2 = get_arrivals(station, lines2_filter)
+                last_refresh = time.time()
+            draw_departure_board(display, arrivals1)
 
     except Exception as e:
         print(f"An error occurred: {e}")
