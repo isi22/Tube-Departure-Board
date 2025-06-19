@@ -38,7 +38,7 @@ def make_Font(name, size):
 def initialize_fonts():
     """Initializes all required fonts."""
     global font, fontBold, fontBoldTall, fontBoldLarge
-    font = make_Font("Dot Matrix Regular.ttf", 10)
+    font = make_Font("Dot Matrix Regular.ttf", 15)
     fontBold = make_Font("Dot Matrix Bold.ttf", 10)
     fontBoldTall = make_Font("Dot Matrix Bold Tall.ttf", 10)
     fontBoldLarge = make_Font("Dot Matrix Bold.ttf", 20)
@@ -105,13 +105,13 @@ def draw_departure_board(display, arrivals):
             draw.text(
                 (5, ((row_num - 1) * 14) + 5),
                 text=str(row_num),
-                font=fontBold,
+                font=font,
                 fill="yellow",
             )
             draw.text(
                 (18, ((row_num - 1) * 14) + 5),
                 text=arrival["destination"],
-                font=fontBold,
+                font=font,
                 fill="yellow",
             )
 
