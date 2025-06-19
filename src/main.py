@@ -123,7 +123,7 @@ def get_station_id():
     }
 
     response = query_TFL(TFL_STOPPOINT_SEARCH_URL, params)
-
+    print(response)
     return {"id": response["matches"][0]["id"], "name": response["matches"][0]["name"]}
 
 
