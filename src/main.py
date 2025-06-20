@@ -28,6 +28,7 @@ from luma.core.render import canvas
 # --- Global Font Definitions (Loaded once) ---
 font = None
 fontBold = None
+fontBoldTall = None
 FONT_SIZE = 10
 
 
@@ -38,9 +39,10 @@ def make_Font(name, size):
 
 def initialize_fonts():
     """Initializes all required fonts."""
-    global font, fontBold
+    global font, fontBold, fontBoldTall
     font = make_Font("Dot Matrix Regular.ttf", FONT_SIZE)
     fontBold = make_Font("Dot Matrix Bold.ttf", FONT_SIZE)
+    fontBoldTall = make_Font("Dot Matrix Bold.ttf", 2 * FONT_SIZE)
 
 
 def draw_centered_text_rows(
@@ -98,62 +100,89 @@ def draw_initial_display(display, station):
     draw_centered_text_rows(display, rows, fontBold, fill_color="yellow", row_spacing=3)
 
 
-def get_time_to_arrival(arrival, font):
+def get_time_to_arrival(arrival, font, earliest_arrival=0):
     """Calculates the time to arrival and formats it for display."""
 
     seconds_to_arrival = int(arrival["arrival_time"].timestamp() - time.time())
-    minutes_to_arrival = seconds_to_arrival / 60
-    # print(minutes_to_arrival)
+    time_to_arrival = " "  # Default value if not displayed
+    time_width = 0  # Default value if not displayed
 
-    # Format the time string
-    if minutes_to_arrival > 1:
-        time_to_arrival = (
-            f"{math.floor(minutes_to_arrival + 0.5)} min"
-            + "   "
-            + str(arrival["arrival_time"])
-        )
+    if seconds_to_arrival >= earliest_arrival:
+        display_check = True
+        minutes_to_arrival = seconds_to_arrival / 60
+        # print(minutes_to_arrival)
+
+        # Format the time string
+        if minutes_to_arrival > 1:
+            time_to_arrival = (
+                f"{math.floor(minutes_to_arrival + 0.5)} min"
+                # + "   "
+                # + str(arrival["arrival_time"])
+            )
+        else:
+            time_to_arrival = "due"  # + "   " + str(arrival["arrival_time"])
+
+        bbox = font.getbbox(time_to_arrival)
+        time_width = bbox[2] - bbox[0]
+
     else:
-        time_to_arrival = "due" + "   " + str(arrival["arrival_time"])
-
-    bbox = font.getbbox(time_to_arrival)
-    time_width = bbox[2] - bbox[0]
-    return time_to_arrival, time_width
+        display_check = False
+    return time_to_arrival, time_width, display_check
 
 
 def draw_departure_board(
     display,
     arrivals,
     xoffset=15,
-    row_padding=3,
+    row_padding=1,
     space_num_destination=13,
-    top_yoffset=5,
+    top_yoffset=0,
+    earliest_arrival=0,  # Minimum time to arrival in seconds
 ):
-
     with canvas(display) as draw:
-        for row_num, arrival in enumerate(arrivals):
+        row_num = 1
+        london_tz = pytz.timezone("Europe/London")
+        clock_str = datetime.now(london_tz).strftime("%H:%M:%S")
+        # clock_str = "10:43:45"
+        bbox = fontBold.getbbox(clock_str)
+        clock_width = bbox[2] - bbox[0]
+        clock_height = bbox[3] - bbox[1]
+        x_offset = (display.width - clock_width) / 2
+        draw.text(
+            (x_offset, display.height - clock_height),
+            text=clock_str,
+            font=fontBold,
+            fill="yellow",
+        )
 
-            time_to_arrival, time_width = get_time_to_arrival(arrival, font)
-            ypos = row_num * (FONT_SIZE + row_padding) + top_yoffset
-            if ypos >= display.height - FONT_SIZE:
-                break
-            draw.text(
-                (xoffset, ypos),
-                text=str(row_num + 1),
-                font=font,
-                fill="yellow",
+        for arrival in arrivals:
+
+            time_to_arrival, time_width, display_check = get_time_to_arrival(
+                arrival, font, earliest_arrival
             )
-            draw.text(
-                (xoffset + space_num_destination, ypos),
-                text=arrival["destination"],
-                font=font,
-                fill="yellow",
-            )
-            draw.text(
-                (display.width - time_width - xoffset, ypos),
-                text=time_to_arrival,
-                font=font,
-                fill="yellow",
-            )
+            if display_check:
+                ypos = (row_num - 1) * (FONT_SIZE + row_padding) + top_yoffset
+                if ypos >= display.height - (clock_height + FONT_SIZE + row_padding):
+                    break
+                draw.text(
+                    (xoffset, ypos),
+                    text=str(row_num),
+                    font=font,
+                    fill="yellow",
+                )
+                draw.text(
+                    (xoffset + space_num_destination, ypos),
+                    text=arrival["destination"],
+                    font=font,
+                    fill="yellow",
+                )
+                draw.text(
+                    (display.width - time_width - xoffset, ypos),
+                    text=time_to_arrival,
+                    font=font,
+                    fill="yellow",
+                )
+                row_num += 1
 
 
 def query_TFL(url: str, params: dict = None, max_retries: int = 3):
@@ -195,7 +224,7 @@ def get_lines_filter(lines):
     return filter_set
 
 
-def get_arrivals(station, filter, n=7):
+def get_arrivals(station, filter, earliest_arrival=0, n=7):
 
     try:
 
@@ -205,12 +234,24 @@ def get_arrivals(station, filter, n=7):
 
         all_arrivals = query_TFL(TFL_STOPPOINT_ARRIVALS_URL)
 
+        print(json.dumps(all_arrivals[0:8], indent=2))
+
         filtered_arrivals = [
             p
             for p in all_arrivals
             if (
-                (p.get("lineName", "").lower(), p.get("direction", "").lower())
-                in filter
+                # Get line name from prediction
+                (p_line := p.get("lineName", "").lower())
+                and
+                # Get platform name from prediction
+                (p_platform := p.get("platformName", "").lower())
+                and
+                # Check timeToStation minimum
+                (p.get("timeToStation", float("inf"))) >= earliest_arrival
+                and any(
+                    f_line == p_line and f_direction_substring in p_platform
+                    for f_line, f_direction_substring in filter
+                )
             )
         ]
 
@@ -240,6 +281,8 @@ def get_arrivals(station, filter, n=7):
                 {
                     "destination": destination,
                     "arrival_time": arrival_dt,  # Formatted time string
+                    "timeToStation": arrival.get("timeToStation"),
+                    "vehicle_id": arrival.get("vehicleId"),
                 }
             )
 
@@ -250,7 +293,7 @@ def get_arrivals(station, filter, n=7):
         else:
             for i, info in enumerate(final_display_info):
                 print(
-                    f"[{i+1}] To: {info['destination']}, Arriving: {info['arrival_time']}"
+                    f"[{i+1}] To: {info['destination']}, Vehicle ID: {info['vehicle_id']}, Time To Station: {info['timeToStation']/60}, Arriving: {info['arrival_time']}"
                 )
 
         return final_display_info
@@ -281,8 +324,11 @@ def main():
         lines1_filter = get_lines_filter(config.lines1)
         lines2_filter = get_lines_filter(config.lines2)
 
-        arrivals1 = get_arrivals(station, lines1_filter)
-        arrivals2 = get_arrivals(station, lines2_filter)
+        # Convert earliest_arrival_minutes to seconds
+        earliest_arrival_seconds = config.earliest_arrival * 60
+
+        arrivals1 = get_arrivals(station, lines1_filter, earliest_arrival_seconds)
+        arrivals2 = get_arrivals(station, lines2_filter, earliest_arrival_seconds)
 
         draw_initial_display(display, station)
 
@@ -293,11 +339,17 @@ def main():
 
         while True:
             if time.time() - last_refresh > config.refresh_interval:
-                arrivals1 = get_arrivals(station, lines1_filter)
-                arrivals2 = get_arrivals(station, lines2_filter)
+                arrivals1 = get_arrivals(
+                    station, lines1_filter, earliest_arrival_seconds
+                )
+                arrivals2 = get_arrivals(
+                    station, lines2_filter, earliest_arrival_seconds
+                )
                 last_refresh = time.time()
-            draw_departure_board(display, arrivals1)
-            time.sleep(0.5)
+            draw_departure_board(
+                display, arrivals1, earliest_arrival=earliest_arrival_seconds
+            )
+            time.sleep(0.1)
 
     except Exception as e:
         print(f"An error occurred: {e}")

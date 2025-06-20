@@ -5,14 +5,15 @@ station = "Barons Court"  # The station to display on the board
 mode = "tube"
 
 lines1 = [
-    {"line": "Piccadilly", "direction": "outbound"},
-    {"line": "District", "direction": "outbound"},
+    {"line": "Piccadilly", "direction": "eastbound"},
+    {"line": "District", "direction": "eastbound"},
 ]  # The lines and directions to display on the board, use trial and error to find the correct direction for each line
 
 lines2 = [
-    {"line": "Piccadilly", "direction": "inbound"},
-    {"line": "District", "direction": "inbound"},
+    {"line": "Piccadilly", "direction": "westbound"},
+    {"line": "District", "direction": "westbound"},
 ]  # The lines and directions to display on the board, use trial and error to find the correct direction for each line
 
+earliest_arrival = 0  # The earliest arrival time in minutes to display on the board
 refresh_interval = 5  # The interval in seconds to refresh tfl data
 api_key = None  # os.getenv("TFL_API_KEY")
