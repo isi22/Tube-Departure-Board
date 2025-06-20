@@ -331,11 +331,11 @@ def get_arrivals(station, filter_criteria_set, earliest_arrival_seconds=0, n=7):
                     }
                 )
 
-        print(f"\n--- get_arrivals() returning {len(final_display_info)} entries ---")
-        for i, info in enumerate(final_display_info):
-            print(
-                f"  [{i+1}] To: {info['destination']}, Vehicle ID: {info['vehicle_id']}, Time To Station: {info['timeToStation']/60:.2f} min, Arriving: {info['arrival_time'].strftime('%H:%M:%S %Z')}"
-            )
+        # print(f"\n--- get_arrivals() returning {len(final_display_info)} entries ---")
+        # for i, info in enumerate(final_display_info):
+        #     print(
+        #         f"  [{i+1}] To: {info['destination']}, Vehicle ID: {info['vehicle_id']}, Time To Station: {info['timeToStation']/60:.2f} min, Arriving: {info['arrival_time'].strftime('%H:%M:%S %Z')}"
+        #     )
 
         return final_display_info
 
@@ -420,9 +420,9 @@ def main():
                     # Only update if successful (to avoid clearing valid data if API fails)
                     current_arrivals1 = new_arrivals1
                     # current_arrivals2 = new_arrivals2
-                    print(
-                        f"DEBUG: Data refreshed. Arrivals1 count: {len(current_arrivals1)}, Arrivals2 count: {len(current_arrivals2)}"
-                    )
+                    # print(
+                    #     f"DEBUG: Data refreshed. Arrivals1 count: {len(current_arrivals1)}, Arrivals2 count: {len(current_arrivals2)}"
+                    # )
                 except Exception as e:
                     print(f"ERROR: API data fetch failed: {e}. Keeping old data.")
 
