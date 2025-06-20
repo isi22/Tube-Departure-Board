@@ -134,9 +134,9 @@ def draw_departure_board(
     display,
     arrivals,
     xoffset=15,
-    row_padding=1,
+    row_padding=3,
     space_num_destination=13,
-    top_yoffset=0,
+    yoffset=2,
     earliest_arrival=0,  # Minimum time to arrival in seconds
 ):
     with canvas(display) as draw:
@@ -149,7 +149,7 @@ def draw_departure_board(
         clock_height = bbox[3] - bbox[1]
         x_offset = (display.width - clock_width) / 2
         draw.text(
-            (x_offset, display.height - clock_height),
+            (x_offset, display.height - (clock_height + yoffset)),
             text=clock_str,
             font=fontBold,
             fill="yellow",
@@ -161,8 +161,10 @@ def draw_departure_board(
                 arrival, font, earliest_arrival
             )
             if display_check:
-                ypos = (row_num - 1) * (FONT_SIZE + row_padding) + top_yoffset
-                if ypos >= display.height - (clock_height + FONT_SIZE + row_padding):
+                ypos = (row_num - 1) * (FONT_SIZE + row_padding) + yoffset
+                if ypos >= display.height - (
+                    clock_height + yoffset + FONT_SIZE + row_padding
+                ):
                     break
                 draw.text(
                     (xoffset, ypos),

@@ -14,6 +14,6 @@ lines2 = [
     {"line": "District", "direction": "westbound"},
 ]  # The lines and directions to display on the board, use trial and error to find the correct direction for each line
 
-earliest_arrival = 0  # The earliest arrival time in minutes to display on the board
+earliest_arrival = 8  # The earliest arrival time in minutes to display on the board
 refresh_interval = 5  # The interval in seconds to refresh tfl data
 api_key = None  # os.getenv("TFL_API_KEY")
