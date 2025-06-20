@@ -374,9 +374,9 @@ def main():
         current_arrivals1 = get_arrivals(
             station, lines1_filter, earliest_arrival_seconds
         )
-        current_arrivals2 = get_arrivals(
-            station, lines2_filter, earliest_arrival_seconds
-        )
+        # current_arrivals2 = get_arrivals(
+        #     station, lines2_filter, earliest_arrival_seconds
+        # )
         print("DEBUG: Initial arrival data fetched.")
 
         draw_initial_display(display, station)
@@ -413,9 +413,9 @@ def main():
                     new_arrivals1 = get_arrivals(
                         station, lines1_filter, earliest_arrival_seconds
                     )
-                    new_arrivals2 = get_arrivals(
-                        station, lines2_filter, earliest_arrival_seconds
-                    )
+                    # new_arrivals2 = get_arrivals(
+                    #     station, lines2_filter, earliest_arrival_seconds
+                    # )
 
                     # Only update if successful (to avoid clearing valid data if API fails)
                     current_arrivals1 = new_arrivals1
