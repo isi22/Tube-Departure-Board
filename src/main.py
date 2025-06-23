@@ -284,12 +284,15 @@ def draw_clock(
     Draws the live clock at the bottom of the display onto the given draw object.
     It's responsible for drawing the text, but not for clearing or display update.
     """
-
+    t1 = time.monotonic()
     # Clear the entire clock display area on the buffer to black
     draw_obj.rectangle(
         clock_display_rect,
         fill="black",
     )
+    print(f"DEBUG Clock: Cleared clock area in {time.monotonic() - t1:.3f}s.")
+
+    t2 = time.monotonic()
 
     clock_str = get_current_london_datetime().strftime("%H:%M:%S")
 
@@ -299,12 +302,17 @@ def draw_clock(
     x_offset_clock = (display_width - clock_width) / 2
     y_offset_clock = display_height - (clock_height + yoffset)
 
+    print(f"DEBUG Clock: Calculated clock position in {time.monotonic() - t2:.3f}s.")
+
+    t3 = time.monotonic()
     draw_obj.text(
         (x_offset_clock, y_offset_clock),
         text=clock_str,
         font=fontBold,
         fill="yellow",
     )
+
+    print(f"DEBUG Clock: Drawn clock text in {time.monotonic() - t3:.3f}s.")
 
 
 def draw_arrival_lines(
