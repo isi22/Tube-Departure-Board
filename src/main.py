@@ -480,6 +480,7 @@ def render_worker(
     then puts completed frames into rendered_frames_queue for the main thread.
     This thread handles Task 2 (drawing arrivals at 1 FPS) and preparing clock updates (part of Task 1).
     """
+
     # Private buffer and drawing handle for this worker thread
     render_buffer = Image.new(display_props["mode"], display_props["size"])
     render_draw_handle = ImageDraw.Draw(render_buffer)
@@ -507,12 +508,6 @@ def render_worker(
         display_props["size"][0],
         display_props["size"][1] - estimated_clock_height_plus_yoffset,
     )
-    rect_clock = (
-        0,
-        display_props["size"][1] - estimated_clock_height_plus_yoffset,
-        display_props["size"][0],
-        display_props["size"][1],
-    )
 
     while True:
         frame_render_start_time = time.monotonic()
@@ -525,16 +520,6 @@ def render_worker(
             print("DEBUG Render Worker: Consumed new raw API data from queue.")
         except queue.Empty:
             pass  # No new raw API data, use existing
-
-        # --- Draw Clock (always redraw, part of Task 1 preparation) ---
-        draw_clock(
-            render_draw_handle,
-            display_props["size"][0],
-            display_props["size"][1],
-            2,
-            fontBold,
-            clock_display_rect=rect_clock,
-        )  # yoffset=2
 
         # --- Draw Arrival Lines (conditional update based on interval, Task 2) ---
         current_monotonic_time = time.monotonic()
@@ -681,6 +666,28 @@ def main():
                 print("DEBUG Main: Consumed new rendered frame from Render Worker.")
             except queue.Empty:
                 pass  # No new frame yet, display the previous one.
+
+                # --- Draw Clock (always redraw, part of Task 1 preparation) ---
+
+            render_draw_handle = ImageDraw.Draw(display_output_buffer)
+            estimated_clock_height_plus_yoffset = (
+                fontBold.getbbox("00:00:00")[3] - fontBold.getbbox("00:00:00")[1]
+            ) + 2
+            rect_clock = (
+                0,
+                display_device.size[1] - estimated_clock_height_plus_yoffset,
+                display_device.size[0],
+                display_device.size[1],
+            )
+
+            draw_clock(
+                render_draw_handle,
+                display_device.size[0],
+                display_device.size[1],
+                2,
+                fontBold,
+                clock_display_rect=rect_clock,
+            )  # yoffset=2
 
             # --- PHYSICAL DISPLAY UPDATE (TASK 1) ---
             # This sends the entire display_output_buffer to the physical display/emulator.
