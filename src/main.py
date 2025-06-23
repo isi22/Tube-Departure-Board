@@ -193,7 +193,7 @@ def draw_departure_board(
                     (xoffset, ypos),  # Starts at xoffset
                     text=arrival["destination"],
                     font=font,
-                    fill="yellow",
+                    # fill="yellow",
                 )
 
                 # Draw time to arrival on the right
@@ -201,7 +201,7 @@ def draw_departure_board(
                     (display.width - time_width - xoffset, ypos),
                     text=time_to_arrival,
                     font=font,
-                    fill="yellow",
+                    # fill="yellow",
                 )
                 row_num += 1
 
@@ -433,7 +433,7 @@ def main():
                 display,
                 current_arrivals1,  # Pass the combined and re-sorted list
                 earliest_arrival=earliest_arrival_seconds,
-                font=ImageFont.load_default(),
+                # font=ImageFont.load_default(),
             )
 
             print(
