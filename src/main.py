@@ -485,7 +485,7 @@ def main():
             serial_interface = spi(port=0, device=0, gpio=None)
             display_device = ssd1322(serial_interface, rotate=config.displayRotation)
             GPIO.setmode(GPIO.BCM)
-            GPIO.setup(0, GPIO.IN)
+            GPIO.setup(0, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
         else:
             print("DEBUG Main: Initializing Pygame emulator...")
             display_device = pygame(width=256, height=64, rotate=config.displayRotation)
