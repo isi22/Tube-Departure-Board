@@ -136,78 +136,229 @@ def get_time_to_arrival(arrival, font, earliest_arrival=0):
     return time_to_arrival, time_width, display_check
 
 
+# def draw_departure_board(
+#     display,
+#     arrivals,
+#     xoffset=15,
+#     row_padding=3,
+#     space_num_destination=13,
+#     yoffset=2,
+#     earliest_arrival=0,
+#     # font=font,
+# ):
+#     with canvas(display) as draw:
+
+#         # Draw the live clock first
+#         london_tz = pytz.timezone("Europe/London")
+#         current_london_time = datetime.now(london_tz)
+#         clock_str = current_london_time.strftime("%H:%M:%S")
+
+#         bbox_clock = fontBold.getbbox(clock_str)  # Use bbox_clock to avoid name clash
+#         clock_width = bbox_clock[2] - bbox_clock[0]
+#         clock_height = bbox_clock[3] - bbox_clock[1]
+#         x_offset_clock = (display.width - clock_width) / 2
+#         draw.text(
+#             (
+#                 x_offset_clock,
+#                 display.height - (clock_height + yoffset),
+#             ),  # Use x_offset_clock
+#             text=clock_str,
+#             font=fontBold,
+#             fill="yellow",
+#         )
+
+#         # Draw arrival entries
+#         row_num = 1
+#         max_y_for_arrivals = display.height - (
+#             clock_height + yoffset + FONT_SIZE + row_padding
+#         )  # Space above clock
+
+#         for arrival in arrivals:
+#             time_to_arrival, time_width, display_check = get_time_to_arrival(
+#                 arrival, font, earliest_arrival
+#             )
+
+#             if display_check:
+#                 ypos = (row_num - 1) * (FONT_SIZE + row_padding) + yoffset
+
+#                 # Check if this row would overlap with the clock or go off screen
+#                 if ypos >= max_y_for_arrivals:
+#                     break  # Stop drawing if no more space
+
+#                 # Draw row number (optional, often implied by order)
+#                 # draw.text((xoffset, ypos), text=str(row_num), font=font, fill="yellow")
+
+#                 t1 = time.monotonic()
+#                 # Draw destination (adjust xoffset for number removal if desired)
+#                 draw.text(
+#                     (xoffset, ypos),  # Starts at xoffset
+#                     text=arrival["destination"],
+#                     font=font,
+#                     # fill="yellow",
+#                 )
+
+#                 # Draw time to arrival on the right
+#                 draw.text(
+#                     (display.width - time_width - xoffset, ypos),
+#                     text=time_to_arrival,
+#                     font=font,
+#                     # fill="yellow",
+#                 )
+#                 row_num += 1
+#                 print(
+#                     f"DEBUG: Time to draw row {row_num}: {time.monotonic() - t1:.3f}s"
+#                 )
+
+# --- Global Image Buffer and Drawing Handle (already in your code) ---
+global_display_buffer = None
+global_draw_handle = None
+
+# --- Store last drawn values for selective clearing ---
+last_drawn_elements = {
+    "clock": {
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+    },  # Store size directly
+    "arrivals": [],  # List of {'x': 0, 'y': 0, 'width': 0, 'height': 0} for each arrival line's bbox
+}
+
+
+# Modify draw_departure_board
 def draw_departure_board(
-    display,
-    arrivals,
+    display,  # This is the luma.oled.device.ssd1322 object
+    arrivals,  # The list of arrival dicts from get_arrivals
     xoffset=15,
     row_padding=3,
-    space_num_destination=13,
     yoffset=2,
-    earliest_arrival=0,
-    # font=font,
+    earliest_arrival=0,  # Minimum time to arrival in seconds
 ):
-    with canvas(display) as draw:
+    global global_display_buffer, global_draw_handle, last_drawn_elements
 
-        # Draw the live clock first
-        london_tz = pytz.timezone("Europe/London")
-        current_london_time = datetime.now(london_tz)
-        clock_str = current_london_time.strftime("%H:%M:%S")
+    # Make sure the global buffer and draw handle are initialized
+    if global_display_buffer is None or global_draw_handle is None:
+        print("ERROR: Display buffer not initialized! Cannot draw.")
+        return
 
-        bbox_clock = fontBold.getbbox(clock_str)  # Use bbox_clock to avoid name clash
-        clock_width = bbox_clock[2] - bbox_clock[0]
-        clock_height = bbox_clock[3] - bbox_clock[1]
-        x_offset_clock = (display.width - clock_width) / 2
-        draw.text(
-            (
-                x_offset_clock,
-                display.height - (clock_height + yoffset),
-            ),  # Use x_offset_clock
-            text=clock_str,
-            font=fontBold,
-            fill="yellow",
+    draw = global_draw_handle  # Get the drawing context for our off-screen buffer
+
+    # --- Step 1: Clear only the areas that were previously drawn ---
+    # Clear old clock text
+    if last_drawn_elements["clock"]["text"]:
+        x, y = last_drawn_elements["clock"]["x"], last_drawn_elements["clock"]["y"]
+        bbox = last_drawn_elements["clock"]["bbox"]
+        w = bbox[2] - bbox[0]
+        h = bbox[3] - bbox[1]
+        draw.rectangle(
+            (x, y, x + w, y + h), fill="black"
+        )  # Draw a black rectangle over old clock
+
+    # Clear old arrival lines
+    for old_line_info in last_drawn_elements["arrivals"]:
+        x, y = old_line_info["x"], old_line_info["y"]
+        bbox = old_line_info["bbox"]
+        w = bbox[2] - bbox[0]
+        h = bbox[3] - bbox[1]
+        draw.rectangle(
+            (x, y, x + w, y + h), fill="black"
+        )  # Draw a black rectangle over old line
+
+    # Reset the list for the current frame's elements
+    last_drawn_elements["arrivals"] = []
+
+    # --- Step 2: Draw the live clock ---
+    london_tz = pytz.timezone("Europe/London")
+    current_london_time = datetime.now(london_tz)
+    clock_str = current_london_time.strftime("%H:%M:%S")
+
+    bbox_clock = fontBold.getbbox(clock_str)  # Get bounding box of the new clock string
+    clock_width = bbox_clock[2] - bbox_clock[0]
+    clock_height = bbox_clock[3] - bbox_clock[1]
+    x_offset_clock = (display.width - clock_width) / 2
+    y_offset_clock = display.height - (clock_height + yoffset)
+
+    draw.text(
+        (x_offset_clock, y_offset_clock),
+        text=clock_str,
+        font=fontBold,
+        fill="yellow",
+    )
+    # Store information about the newly drawn clock for the next frame's clearing
+    last_drawn_elements["clock"] = {
+        "text": clock_str,
+        "bbox": bbox_clock,
+        "x": x_offset_clock,
+        "y": y_offset_clock,
+    }
+
+    # --- Step 3: Draw arrival entries ---
+    row_num = 1
+    # Calculate the max Y position where arrivals can be drawn without overlapping the clock
+    max_y_for_arrivals = display.height - (
+        clock_height + yoffset + FONT_SIZE + row_padding
+    )
+
+    for arrival in arrivals:
+        # Get formatted time to arrival (e.g., "5 min", "due")
+        time_to_arrival, time_width, display_check = get_time_to_arrival(
+            arrival, font, earliest_arrival
         )
+        if display_check:
+            # Calculate Y position for this arrival row
+            ypos = (row_num - 1) * (FONT_SIZE + row_padding) + yoffset
 
-        # Draw arrival entries
-        row_num = 1
-        max_y_for_arrivals = display.height - (
-            clock_height + yoffset + FONT_SIZE + row_padding
-        )  # Space above clock
+            # Stop if this row would go off-screen or overlap the clock
+            if ypos >= max_y_for_arrivals:
+                break
 
-        for arrival in arrivals:
-            time_to_arrival, time_width, display_check = get_time_to_arrival(
-                arrival, font, earliest_arrival
+            destination_text = arrival["destination"]  # The actual destination name
+            bbox_dest = font.getbbox(destination_text)
+            dest_width = bbox_dest[2] - bbox_dest[0]
+            dest_height = bbox_dest[3] - bbox_dest[1]  # Height needed for clearing
+
+            # Draw destination text
+            draw.text(
+                (xoffset, ypos),
+                text=destination_text,
+                font=font,
+                fill="yellow",
+            )
+            # Draw time to arrival text (aligned right)
+            draw.text(
+                (display.width - time_width - xoffset, ypos),
+                text=time_to_arrival,
+                font=font,
+                fill="yellow",
             )
 
-            if display_check:
-                ypos = (row_num - 1) * (FONT_SIZE + row_padding) + yoffset
+            # Store information about this drawn arrival line for the next frame's clearing
+            # For simplicity, calculate a combined bounding box that covers both texts on the line.
+            # This bbox isn't exact but sufficient for clearing.
+            line_start_x = xoffset
+            line_end_x = display.width - xoffset
+            line_width = line_end_x - line_start_x
 
-                # Check if this row would overlap with the clock or go off screen
-                if ypos >= max_y_for_arrivals:
-                    break  # Stop drawing if no more space
+            last_drawn_elements["arrivals"].append(
+                {
+                    "x": line_start_x,
+                    "y": ypos,
+                    "bbox": (
+                        0,
+                        0,
+                        line_width,
+                        dest_height,
+                    ),  # Store a simplified bbox for clearing the line
+                }
+            )
+            row_num += 1
 
-                # Draw row number (optional, often implied by order)
-                # draw.text((xoffset, ypos), text=str(row_num), font=font, fill="yellow")
-
-                t1 = time.monotonic()
-                # Draw destination (adjust xoffset for number removal if desired)
-                draw.text(
-                    (xoffset, ypos),  # Starts at xoffset
-                    text=arrival["destination"],
-                    font=font,
-                    # fill="yellow",
-                )
-
-                # Draw time to arrival on the right
-                draw.text(
-                    (display.width - time_width - xoffset, ypos),
-                    text=time_to_arrival,
-                    font=font,
-                    # fill="yellow",
-                )
-                row_num += 1
-                print(
-                    f"DEBUG: Time to draw row {row_num}: {time.monotonic() - t1:.3f}s"
-                )
+    # --- Step 4: Send the fully updated (but only partially redrawn) buffer to the display ---
+    display.display(global_display_buffer)
+    print(
+        f"DEBUG: draw_departure_board completed. Drawn {len(last_drawn_elements['arrivals'])} arrival entries."
+    )
 
 
 def query_TFL(url: str, params: dict = None, max_retries: int = 3):
@@ -351,6 +502,8 @@ def get_arrivals(station, filter_criteria_set, earliest_arrival_seconds=0, n=7):
 
 
 def main():
+    global global_display_buffer, global_draw_handle  # Access global vars
+
     display = None  # Initialize display to None outside try-block for cleanup
     try:
         initialize_fonts()
@@ -366,6 +519,9 @@ def main():
                 rotate=config.displayRotation,
             )
             # display.show() # Often called automatically by luma, but explicit is fine.
+
+        global_display_buffer = Image.new(display.mode, display.size)
+        global_draw_handle = ImageDraw.Draw(global_display_buffer)
 
         station = get_station_id()
         # Assume config.lines1 and config.lines2 are lists of dictionaries as discussed
