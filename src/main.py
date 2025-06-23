@@ -179,10 +179,14 @@ def draw_departure_board(
         )
 
         for arrival in arrivals:
-            start_row_time = time.monotonic()
+            start_time_to_arrival = time.monotonic()
             time_to_arrival, time_width, display_check = get_time_to_arrival(
                 arrival, font, earliest_arrival
             )
+            print(
+                f"DEBUG: time to get time_to_arrival: {time.monotonic() - start_time_to_arrival:.3f}s"
+            )
+            start_row_time = time.monotonic()
             if display_check:
                 ypos = (row_num - 1) * (FONT_SIZE + row_padding) + yoffset
 
