@@ -207,7 +207,9 @@ def draw_departure_board(
 def query_TFL(url: str, params: dict = None, max_retries: int = 3):
     for retry_attempt in range(max_retries):
         try:
+            t1 = time.time()
             response = requests.get(url, params=params, timeout=10)
+            print(f"time taken for request: {(time.time()-t1):.2f} seconds")
             response.raise_for_status()
             json_response = response.json()
             if json_response:
