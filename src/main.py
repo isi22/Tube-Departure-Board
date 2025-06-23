@@ -601,7 +601,7 @@ def main():
         print("DEBUG Main: Arrival Lines Worker started.")
 
         # --- Main Display Loop (TASK 1: Updates physical display) ---
-        TARGET_DISPLAY_FPS = 10
+        TARGET_DISPLAY_FPS = 20
         frame_time_budget = 1.0 / TARGET_DISPLAY_FPS
 
         while True:
@@ -620,6 +620,7 @@ def main():
 
             render_draw_handle = ImageDraw.Draw(display_output_buffer)
 
+            t1 = time.monotonic()
             draw_clock(
                 render_draw_handle,
                 display_device.size[0],
@@ -627,12 +628,14 @@ def main():
                 2,
                 fontBold,
             )  # yoffset=2
+            print(f"DEBUG Main: Clock drawn in {time.monotonic() - t1:.3f}s.")
 
+            t2 = time.monotonic()
             # --- PHYSICAL DISPLAY UPDATE (TASK 1) ---
             # This sends the entire display_output_buffer to the physical display/emulator.
             # This operation still takes ~0.5s on Pi for SSD1322, so physical FPS is capped.
             display_device.display(display_output_buffer)
-
+            print(f"DEBUG Main: Display updated in {time.monotonic() - t2:.3f}s.")
             # --- Loop Timing and Control ---
             loop_end_time = time.monotonic()
             loop_duration = loop_end_time - loop_start_time
