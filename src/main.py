@@ -1,53 +1,63 @@
+# --- IMPORTS ---
 import config
 import os
-import time  # Use time.time() for API refresh interval, time.monotonic() for loop timing
+import time
 import sys
 import requests
 import json
 from datetime import datetime
 import math
 import pytz
+import threading
+import queue
+
 from PIL import ImageFont, ImageDraw, Image
-from luma.core.render import canvas
+from luma.core.render import canvas  # Used for initial full-screen update only
 
-# Conditional imports for display driver vs. emulator
+
+# --- CONDITIONAL DISPLAY DRIVER / EMULATOR SETUP ---
+IS_RASPBERRY_PI = False
 if sys.platform.startswith("linux") and os.uname().machine.startswith("arm"):
-    from luma.core.interface.serial import spi
-    from luma.oled.device import ssd1322
+    try:
+        from luma.core.interface.serial import spi
+        from luma.oled.device import ssd1322
 
-    IS_RASPBERRY_PI = True
-    try:  # Dummy pygame for Pi consistency
-        from luma.emulator.device import pygame
+        IS_RASPBERRY_PI = True
     except ImportError:
-
-        class pygame:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def command(self, *args, **kwargs):
-                pass
-
-            def show(self):
-                pass  # Add dummy show method
-
-else:
+        print(
+            "Warning: Running on Raspberry Pi but luma.oled drivers not found. Falling back to emulator."
+        )
+if not IS_RASPBERRY_PI:
     from luma.emulator.device import pygame
 
-    IS_RASPBERRY_PI = False
 
-# --- Global Font Definitions (Loaded once) ---
-font = None
-fontBold = None
-fontBoldTall = None
-FONT_SIZE = 10
+# --- GLOBAL FONT DEFINITIONS ---
+font: ImageFont.FreeTypeFont = None
+fontBold: ImageFont.FreeTypeFont = None
+fontBoldTall: ImageFont.FreeTypeFont = None
+FONT_SIZE: int = 10
+
+# --- GLOBAL API SESSION & QUEUE ---
+API_SESSION = requests.Session()
+arrivals_queue = queue.Queue(maxsize=1)
+
+# --- GLOBAL DISPLAY BUFFER AND DRAW HANDLE ---
+global_display_buffer: Image.Image = None
+global_draw_handle: ImageDraw.ImageDraw = None
+
+# --- Store last drawn content's position/size for selective clearing ---
+last_drawn_elements = {
+    "clock": {"text": "", "x": 0, "y": 0, "width": 0, "height": 0},
+    "arrivals": [],  # List of {'x': 0, 'y': 0, 'width': 0, 'height': 0} for each arrival line
+}
 
 
-def make_Font(name, size):
+# --- HELPER FUNCTIONS (mostly unchanged) ---
+def make_Font(name: str, size: int) -> ImageFont.FreeTypeFont:
     font_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "fonts", name))
     try:
         return ImageFont.truetype(font_path, size, layout_engine=ImageFont.Layout.BASIC)
     except IOError:
-        print(f"Error: Could not load font from {font_path}. Using default.")
         return ImageFont.load_default()
 
 
@@ -58,24 +68,200 @@ def initialize_fonts():
     fontBoldTall = make_Font("Dot Matrix Bold Tall.ttf", 2 * FONT_SIZE)
 
 
+def get_time_to_station_safe(prediction_item: dict) -> float:
+    try:
+        return float(prediction_item.get("timeToStation", math.inf))
+    except (ValueError, TypeError):
+        return math.inf
+
+
+def get_current_london_datetime() -> datetime:
+    london_tz = pytz.timezone("Europe/London")
+    return datetime.now(london_tz)
+
+
+def get_arrivals_display_area_rect(  # This function's return value is now primarily for layout, not for display.display() directly
+    display_width: int,
+    display_height: int,
+    estimated_clock_height_plus_yoffset: int,
+    font_size: int,
+    row_padding: int,
+) -> tuple:
+    top_y = 2
+    bottom_y = display_height - estimated_clock_height_plus_yoffset
+    line_total_height = font_size + row_padding
+    max_lines_fit = (
+        math.floor(max(0, (bottom_y - top_y)) / line_total_height)
+        if line_total_height > 0
+        else 0
+    )
+    total_arrivals_display_height = max_lines_fit * line_total_height
+    return (0, top_y, display_width, total_arrivals_display_height)
+
+
+# --- API INTERACTION FUNCTIONS (same as before) ---
+def query_TFL(
+    url: str,
+    params: dict = None,
+    max_retries: int = 3,
+    _session: requests.Session = None,
+) -> list:
+    session_to_use = _session if _session else requests.Session()
+    for retry_attempt in range(max_retries):
+        try:
+            response = session_to_use.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            json_response = response.json()
+            return json_response if json_response else []
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+            print(
+                f"Error calling TfL API (Attempt {retry_attempt + 1}/{max_retries}): {e}"
+            )
+            if retry_attempt == max_retries - 1:
+                raise RuntimeError(
+                    f"Failed to fetch data from {url} after {max_retries} retries: {e}"
+                )
+        time.sleep(1)
+    return []  # Should not be reached
+
+
+def get_station_id(_session: requests.Session = None) -> dict:
+    TFL_STOPPOINT_SEARCH_URL = "https://api.tfl.gov.uk/StopPoint/Search"
+    params = {
+        "query": config.station,
+        "modes": config.mode,
+        "maxResults": 1,
+        "app_key": config.api_key,
+    }
+    response = query_TFL(TFL_STOPPOINT_SEARCH_URL, params, _session=_session)
+    if response and response.get("matches") and len(response["matches"]) > 0:
+        return response["matches"][0]
+    else:
+        raise RuntimeError(f"Could not find station ID for '{config.station}'.")
+
+
+def get_lines_filter(lines_config_list: list) -> set:
+    filter_set = set()
+    for entry in lines_config_list:
+        line = entry.get("line")
+        direction_substring = entry.get("direction")
+        if line and direction_substring:
+            filter_set.add((line.lower(), direction_substring.lower()))
+    return filter_set
+
+
+def get_arrivals(
+    station: dict,
+    filter_criteria_set: set,
+    earliest_arrival_seconds: int = 0,
+    n: int = 7,
+    _session: requests.Session = None,
+) -> list:
+    try:
+        TFL_STOPPOINT_ARRIVALS_URL = (
+            "https://api.tfl.gov.uk/StopPoint/" + station["id"] + "/Arrivals"
+        )
+        all_arrivals = query_TFL(TFL_STOPPOINT_ARRIVALS_URL, _session=_session)
+        if not isinstance(all_arrivals, list):
+            return []
+        filtered_predictions = [
+            p
+            for p in all_arrivals
+            if (
+                (p_line := p.get("lineName", "").lower())
+                and (p_platform := p.get("platformName", "").lower())
+                and (get_time_to_station_safe(p)) >= earliest_arrival_seconds
+                and any(
+                    f_line == p_line and f_direction_substring in p_platform
+                    for f_line, f_direction_substring in filter_criteria_set
+                )
+            )
+        ]
+        filtered_sorted_arrivals = sorted(
+            filtered_predictions, key=lambda p: p.get("timeToStation", math.inf)
+        )
+        final_display_info = []
+        for arrival in filtered_sorted_arrivals[:n]:
+            destination = arrival.get("towards") or arrival.get("destinationName")
+            destination = destination if destination else "Unknown Destination"
+            expected_arrival_utc_str = arrival.get("expectedArrival")
+            arrival_dt = None
+            if expected_arrival_utc_str:
+                try:
+                    naive_dt = datetime.strptime(
+                        expected_arrival_utc_str, "%Y-%m-%dT%H:%M:%SZ"
+                    )
+                    arrival_dt = naive_dt.replace(tzinfo=pytz.utc)
+                except ValueError:
+                    print(
+                        f"Warning: Could not parse expectedArrival: {expected_arrival_utc_str}"
+                    )
+            if arrival_dt is not None:
+                final_display_info.append(
+                    {
+                        "destination": destination,
+                        "arrival_time": arrival_dt,
+                        "timeToStation": arrival.get("timeToStation"),
+                        "vehicle_id": arrival.get("vehicleId"),
+                    }
+                )
+        return final_display_info
+    except Exception as e:
+        print(f"An unexpected error occurred in get_arrivals: {e}")
+        return []
+
+
+# --- BACKGROUND WORKER THREAD FUNCTION (same as before) ---
+def fetch_arrivals_worker(
+    station_info: dict,
+    lines1_filter: set,
+    lines2_filter: set,
+    earliest_arrival_seconds: int,
+    refresh_interval_seconds: int,
+):
+    while True:
+        try:
+            print("DEBUG Worker: Fetching new arrival data...")
+            new_arrivals1 = get_arrivals(
+                station_info,
+                lines1_filter,
+                earliest_arrival_seconds,
+                _session=API_SESSION,
+            )
+            new_arrivals2 = get_arrivals(
+                station_info,
+                lines2_filter,
+                earliest_arrival_seconds,
+                _session=API_SESSION,
+            )
+            try:
+                while not arrivals_queue.empty():
+                    arrivals_queue.get_nowait()
+                arrivals_queue.put_nowait((new_arrivals1, new_arrivals2))
+                print("DEBUG Worker: New arrival data put into queue.")
+            except queue.Full:
+                print(
+                    "WARNING Worker: Arrivals queue was full, could not put new data (main thread consuming too slowly)."
+                )
+        except Exception as e:
+            print(f"ERROR Worker: Failed to fetch arrivals: {e}. Retrying after sleep.")
+        time.sleep(refresh_interval_seconds)
+
+
+# --- DISPLAY DRAWING FUNCTIONS ---
+# These functions now draw content onto the global_draw_handle (PIL.ImageDraw.Draw) directly.
+
+
 def draw_centered_text_rows(
-    display: object,
+    draw_obj: ImageDraw.ImageDraw,
+    display_width: int,
+    display_height: int,
     rows_text: list[str],
     font: ImageFont.FreeTypeFont,
     fill_color: str = "yellow",
     row_spacing: int = 3,
 ):
-    if not isinstance(rows_text, list) or not all(
-        isinstance(row, str) for row in rows_text
-    ):
-        print("Error: 'rows_text' must be a list of strings.")
-        return
-    if not hasattr(display, "width") or not hasattr(display, "height"):
-        print("Error: 'display' object must have 'width' and 'height' attributes.")
-        return
-    if not rows_text:
-        return
-
+    # Same logic as before, using draw_obj
     row_dimensions = []
     total_text_height = 0
     for row_content in rows_text:
@@ -86,31 +272,49 @@ def draw_centered_text_rows(
             {"content": row_content, "width": width, "height": height}
         )
         total_text_height += height
-
     total_height_with_spacing = total_text_height + (len(rows_text) - 1) * row_spacing
-    start_y_offset = (display.height - total_height_with_spacing) / 2
+    start_y_offset = (display_height - total_height_with_spacing) / 2
     current_y = start_y_offset
-
-    try:
-        with canvas(display) as draw:
-            for row_data in row_dimensions:
-                row_content = row_data["content"]
-                row_width = row_data["width"]
-
-                x_offset = (display.width - row_width) / 2
-
-                draw.text(
-                    (x_offset, current_y), text=row_content, font=font, fill=fill_color
-                )
-                current_y += row_data["height"] + row_spacing
-
-    except Exception as e:
-        print(f"An error occurred while drawing the centered text rows: {e}")
+    for row_data in row_dimensions:
+        row_content = row_data["content"]
+        row_width = row_data["width"]
+        row_height = row_data["height"]
+        x_offset = (display_width - row_width) / 2
+        draw_obj.text(
+            (x_offset, current_y), text=row_content, font=font, fill=fill_color
+        )
+        current_y += row_height + row_spacing
 
 
-def draw_initial_display(display, station):
-    rows = ["Welcome to", station["name"]]
-    draw_centered_text_rows(display, rows, fontBold, fill_color="yellow", row_spacing=3)
+def draw_initial_display(display_device: object, station_info: dict):
+    """
+    Draws the initial welcome screen. This clears the entire global buffer,
+    draws the welcome message, and then sends the full buffer to the display.
+    """
+    global global_draw_handle, global_display_buffer  # Ensure global scope for modification
+
+    if global_draw_handle is None or global_display_buffer is None:
+        print("ERROR: Global drawing buffer not initialized for initial display!")
+        return
+
+    # Clear the entire global buffer to black
+    global_draw_handle.rectangle(
+        (0, 0, display_device.width, display_device.height), fill="black"
+    )
+
+    # Draw content to the global buffer
+    draw_centered_text_rows(
+        global_draw_handle,
+        display_device.width,
+        display_device.height,
+        ["Welcome to", station_info["name"]],
+        fontBold,
+        fill_color="yellow",
+        row_spacing=3,
+    )
+
+    # Send the full, newly drawn buffer to the display device
+    display_device.display(global_display_buffer)
 
 
 def get_time_to_arrival(arrival, font, earliest_arrival=0):
@@ -136,500 +340,364 @@ def get_time_to_arrival(arrival, font, earliest_arrival=0):
     return time_to_arrival, time_width, display_check
 
 
-# def draw_departure_board(
-#     display,
-#     arrivals,
-#     xoffset=15,
-#     row_padding=3,
-#     space_num_destination=13,
-#     yoffset=2,
-#     earliest_arrival=0,
-#     # font=font,
-# ):
-#     with canvas(display) as draw:
-
-#         # Draw the live clock first
-#         london_tz = pytz.timezone("Europe/London")
-#         current_london_time = datetime.now(london_tz)
-#         clock_str = current_london_time.strftime("%H:%M:%S")
-
-#         bbox_clock = fontBold.getbbox(clock_str)  # Use bbox_clock to avoid name clash
-#         clock_width = bbox_clock[2] - bbox_clock[0]
-#         clock_height = bbox_clock[3] - bbox_clock[1]
-#         x_offset_clock = (display.width - clock_width) / 2
-#         draw.text(
-#             (
-#                 x_offset_clock,
-#                 display.height - (clock_height + yoffset),
-#             ),  # Use x_offset_clock
-#             text=clock_str,
-#             font=fontBold,
-#             fill="yellow",
-#         )
-
-#         # Draw arrival entries
-#         row_num = 1
-#         max_y_for_arrivals = display.height - (
-#             clock_height + yoffset + FONT_SIZE + row_padding
-#         )  # Space above clock
-
-#         for arrival in arrivals:
-#             time_to_arrival, time_width, display_check = get_time_to_arrival(
-#                 arrival, font, earliest_arrival
-#             )
-
-#             if display_check:
-#                 ypos = (row_num - 1) * (FONT_SIZE + row_padding) + yoffset
-
-#                 # Check if this row would overlap with the clock or go off screen
-#                 if ypos >= max_y_for_arrivals:
-#                     break  # Stop drawing if no more space
-
-#                 # Draw row number (optional, often implied by order)
-#                 # draw.text((xoffset, ypos), text=str(row_num), font=font, fill="yellow")
-
-#                 t1 = time.monotonic()
-#                 # Draw destination (adjust xoffset for number removal if desired)
-#                 draw.text(
-#                     (xoffset, ypos),  # Starts at xoffset
-#                     text=arrival["destination"],
-#                     font=font,
-#                     # fill="yellow",
-#                 )
-
-#                 # Draw time to arrival on the right
-#                 draw.text(
-#                     (display.width - time_width - xoffset, ypos),
-#                     text=time_to_arrival,
-#                     font=font,
-#                     # fill="yellow",
-#                 )
-#                 row_num += 1
-#                 print(
-#                     f"DEBUG: Time to draw row {row_num}: {time.monotonic() - t1:.3f}s"
-#                 )
-
-# --- Global Image Buffer and Drawing Handle (already in your code) ---
-global_display_buffer = None
-global_draw_handle = None
-
-# --- Store last drawn values for selective clearing ---
-last_drawn_elements = {
-    "clock": {
-        "text": "",
-        "x": 0,
-        "y": 0,
-        "width": 0,
-        "height": 0,
-    },  # Store size directly
-    "arrivals": [],  # List of {'x': 0, 'y': 0, 'width': 0, 'height': 0} for each arrival line's bbox
-}
-
-
-# Modify draw_departure_board
-def draw_departure_board(
-    display,  # This is the luma.oled.device.ssd1322 object
-    arrivals,  # The list of arrival dicts from get_arrivals
-    xoffset=15,
-    row_padding=3,
-    yoffset=2,
-    earliest_arrival=0,  # Minimum time to arrival in seconds
+def draw_clock(
+    draw_obj: ImageDraw.ImageDraw,
+    display_width: int,
+    display_height: int,
+    yoffset: int,
+    fontBold: ImageFont.FreeTypeFont,
+    clock_area_rect: tuple,
 ):
-    global global_display_buffer, global_draw_handle, last_drawn_elements
+    """
+    Draws the live clock at the bottom of the display onto the global buffer.
+    It clears only the clock's rectangle on the buffer before redrawing.
+    """
+    # Clear the specific old clock area on the buffer to black
+    # clock_area_rect is (x, y, width, height) of the clock's content region
+    draw_obj.rectangle(
+        (
+            clock_area_rect[0],
+            clock_area_rect[1],
+            clock_area_rect[0] + clock_area_rect[2],
+            clock_area_rect[1] + clock_area_rect[3],
+        ),
+        fill="black",
+    )
 
-    # Make sure the global buffer and draw handle are initialized
-    if global_display_buffer is None or global_draw_handle is None:
-        print("ERROR: Display buffer not initialized! Cannot draw.")
-        return
+    clock_str = get_current_london_datetime().strftime("%H:%M:%S")
 
-    draw = global_draw_handle  # Get the drawing context for our off-screen buffer
-
-    # --- Step 1: Clear only the areas that were previously drawn ---
-    # Clear old clock text
-    if last_drawn_elements["clock"]["text"]:
-        x, y = last_drawn_elements["clock"]["x"], last_drawn_elements["clock"]["y"]
-        bbox = last_drawn_elements["clock"]["bbox"]
-        w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
-        draw.rectangle(
-            (x, y, x + w, y + h), fill="black"
-        )  # Draw a black rectangle over old clock
-
-    # Clear old arrival lines
-    for old_line_info in last_drawn_elements["arrivals"]:
-        x, y = old_line_info["x"], old_line_info["y"]
-        bbox = old_line_info["bbox"]
-        w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
-        draw.rectangle(
-            (x, y, x + w, y + h), fill="black"
-        )  # Draw a black rectangle over old line
-
-    # Reset the list for the current frame's elements
-    last_drawn_elements["arrivals"] = []
-
-    # --- Step 2: Draw the live clock ---
-    london_tz = pytz.timezone("Europe/London")
-    current_london_time = datetime.now(london_tz)
-    clock_str = current_london_time.strftime("%H:%M:%S")
-
-    bbox_clock = fontBold.getbbox(clock_str)  # Get bounding box of the new clock string
+    bbox_clock = fontBold.getbbox(clock_str)
     clock_width = bbox_clock[2] - bbox_clock[0]
     clock_height = bbox_clock[3] - bbox_clock[1]
-    x_offset_clock = (display.width - clock_width) / 2
-    y_offset_clock = display.height - (clock_height + yoffset)
+    x_offset_clock = (display_width - clock_width) / 2
+    y_offset_clock = display_height - (clock_height + yoffset)
 
-    draw.text(
+    draw_obj.text(
         (x_offset_clock, y_offset_clock),
         text=clock_str,
         font=fontBold,
         fill="yellow",
     )
-    # Store information about the newly drawn clock for the next frame's clearing
-    last_drawn_elements["clock"] = {
-        "text": clock_str,
-        "bbox": bbox_clock,
-        "x": x_offset_clock,
-        "y": y_offset_clock,
-    }
 
-    # --- Step 3: Draw arrival entries ---
-    row_num = 1
-    # Calculate the max Y position where arrivals can be drawn without overlapping the clock
-    max_y_for_arrivals = display.height - (
-        clock_height + yoffset + FONT_SIZE + row_padding
+    # Update last_drawn_elements for the clock (for the next clear cycle)
+    # The rect in last_drawn_elements is calculated and stored in main loop's clock_area_rect
+    # Here, we just ensure its content is set for potential future reference if needed.
+    last_drawn_elements["clock"]["text"] = clock_str
+
+
+def draw_arrival_lines(
+    draw_obj: ImageDraw.ImageDraw,
+    display_width: int,
+    display_height: int,
+    arrivals: list,
+    xoffset: int,
+    row_padding: int,
+    yoffset: int,
+    font_size: int,
+    earliest_arrival_seconds: int,
+    font: ImageFont.FreeTypeFont,
+    fontBold: ImageFont.FreeTypeFont,
+    arrivals_display_rect: tuple,  # Pass the full arrivals area rect for clearing
+):
+    """
+    Draws the list of arrival predictions on the main board area onto the global buffer.
+    It clears the entire arrivals area on the buffer before redrawing.
+    """
+    # Clear the entire arrivals display area on the buffer to black
+    draw_obj.rectangle(
+        (
+            arrivals_display_rect[0],
+            arrivals_display_rect[1],
+            arrivals_display_rect[0] + arrivals_display_rect[2],
+            arrivals_display_rect[1] + arrivals_display_rect[3],
+        ),
+        fill="black",
     )
 
-    for arrival in arrivals:
-        # Get formatted time to arrival (e.g., "5 min", "due")
-        time_to_arrival, time_width, display_check = get_time_to_arrival(
-            arrival, font, earliest_arrival
-        )
-        if display_check:
-            # Calculate Y position for this arrival row
-            ypos = (row_num - 1) * (FONT_SIZE + row_padding) + yoffset
+    # Reset last_drawn_elements for arrivals for this frame's elements
+    # This list is not strictly needed anymore if clearing full arrivals_display_rect
+    # but good to keep for consistency/future features.
+    last_drawn_elements["arrivals"] = []
 
-            # Stop if this row would go off-screen or overlap the clock
+    # Estimate clock height to determine max space for arrivals
+    temp_clock_bbox = fontBold.getbbox("00:00:00")
+    estimated_clock_height_plus_yoffset = (
+        temp_clock_bbox[3] - temp_clock_bbox[1]
+    ) + yoffset
+
+    max_y_for_arrivals = display_height - estimated_clock_height_plus_yoffset
+
+    row_num = 0
+
+    for arrival in arrivals:
+        time_to_arrival, time_width, display_check = get_time_to_arrival(
+            arrival, font, earliest_arrival_seconds
+        )
+
+        if display_check:  # Only process and draw if display_check is True
+            ypos = row_num * (font_size + row_padding) + yoffset
+
             if ypos >= max_y_for_arrivals:
                 break
 
-            destination_text = arrival["destination"]  # The actual destination name
-            bbox_dest = font.getbbox(destination_text)
-            dest_width = bbox_dest[2] - bbox_dest[0]
-            dest_height = bbox_dest[3] - bbox_dest[1]  # Height needed for clearing
+            destination_text = arrival["destination"]
 
-            # Draw destination text
-            draw.text(
+            target_time_end_x = display_width - xoffset
+            time_text_start_x = target_time_end_x - time_width  # Definition
+
+            dest_text_width = (
+                font.getbbox(destination_text)[2] - font.getbbox(destination_text)[0]
+            )
+            dest_text_end_x = xoffset + dest_text_width
+
+            char_space_width = font.getbbox(" ")[2] - font.getbbox(" ")[0]
+            if char_space_width == 0:
+                char_space_width = 1
+
+            # --- FIX IS HERE ---
+            space_needed_pixels = (
+                time_text_start_x - dest_text_end_x
+            )  # Corrected variable name
+            # --- END FIX ---
+
+            num_spaces = max(1, math.ceil(space_needed_pixels / char_space_width))
+            combined_line_text = (
+                f"{destination_text}{' ' * num_spaces}{time_to_arrival}"
+            )
+
+            max_line_width = display_width - (2 * xoffset)
+            bbox_combined = font.getbbox(combined_line_text)
+
+            if (bbox_combined[2] - bbox_combined[0]) > max_line_width:
+                avg_char_width = font.getbbox("A")[2] - font.getbbox("A")[0]
+                if avg_char_width == 0:
+                    avg_char_width = 1
+                space_for_dest_pixels = (
+                    max_line_width - time_width - (num_spaces * char_space_width)
+                )
+                max_dest_chars = math.floor(space_for_dest_pixels / avg_char_width)
+
+                if max_dest_chars > 3:
+                    destination_text = destination_text[: max_dest_chars - 3] + "..."
+                elif max_dest_chars > 0:
+                    destination_text = destination_text[:max_dest_chars]
+                else:
+                    destination_text = ""
+
+                combined_line_text = (
+                    f"{destination_text}{' ' * num_spaces}{time_to_arrival}"
+                )
+
+            draw_obj.text(
                 (xoffset, ypos),
-                text=destination_text,
+                text=combined_line_text,
                 font=font,
                 fill="yellow",
             )
-            # Draw time to arrival text (aligned right)
-            draw.text(
-                (display.width - time_width - xoffset, ypos),
-                text=time_to_arrival,
-                font=font,
-                fill="yellow",
-            )
-
-            # Store information about this drawn arrival line for the next frame's clearing
-            # For simplicity, calculate a combined bounding box that covers both texts on the line.
-            # This bbox isn't exact but sufficient for clearing.
-            line_start_x = xoffset
-            line_end_x = display.width - xoffset
-            line_width = line_end_x - line_start_x
-
+            # Store info for this line (for next clear cycle)
+            bbox_drawn_text = font.getbbox(combined_line_text)
             last_drawn_elements["arrivals"].append(
-                {
-                    "x": line_start_x,
+                {  # This might not be fully used if entire rect is cleared.
+                    "x": xoffset,
                     "y": ypos,
-                    "bbox": (
-                        0,
-                        0,
-                        line_width,
-                        dest_height,
-                    ),  # Store a simplified bbox for clearing the line
+                    "width": bbox_drawn_text[2] - bbox_drawn_text[0],
+                    "height": bbox_drawn_text[3] - bbox_drawn_text[1],
                 }
             )
             row_num += 1
 
-    # --- Step 4: Send the fully updated (but only partially redrawn) buffer to the display ---
-    display.display(global_display_buffer)
-    print(
-        f"DEBUG: draw_departure_board completed. Drawn {len(last_drawn_elements['arrivals'])} arrival entries."
-    )
 
-
-def query_TFL(url: str, params: dict = None, max_retries: int = 3):
-    for retry_attempt in range(max_retries):
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            json_response = response.json()
-            if json_response:
-                return json_response
-            else:
-                print(f"Warning: TFL API returned an empty JSON response for {url}")
-                if retry_attempt == max_retries - 1:
-                    raise ValueError(
-                        "TFL API returned an empty or invalid JSON response after retries."
-                    )
-        except requests.exceptions.RequestException as e:
-            print(f"Request error (Attempt {retry_attempt + 1}/{max_retries}): {e}")
-            if retry_attempt == max_retries - 1:
-                raise RuntimeError(
-                    f"Failed to fetch data from {url} after {max_retries} retries: {e}"
-                )
-        except json.JSONDecodeError as e:
-            print(f"JSON decode error (Attempt {retry_attempt + 1}/{max_retries}): {e}")
-            if retry_attempt == max_retries - 1:
-                raise ValueError(
-                    f"Failed to decode JSON from {url} after {max_retries} retries: {e}"
-                )
-    raise RuntimeError("Unexpected exit from query_TFL retry loop.")
-
-
-def get_station_id():
-    TFL_STOPPOINT_SEARCH_URL = "https://api.tfl.gov.uk/StopPoint/Search"
-    params = {
-        "query": config.station,
-        "modes": config.mode,
-        "maxResults": 1,
-        "app_key": config.api_key,
-    }
-    response = query_TFL(TFL_STOPPOINT_SEARCH_URL, params)
-    if response and response.get("matches") and len(response["matches"]) > 0:
-        first_match = response["matches"][0]
-        return {"id": first_match.get("id"), "name": first_match.get("name")}
-    else:
-        raise RuntimeError(f"Could not find station ID for '{config.station}'.")
-
-
-def get_lines_filter(lines_config_list):
-    filter_set = set()
-    for entry in lines_config_list:
-        line = entry.get("line")
-        direction = entry.get("direction")
-        if line and direction:
-            filter_set.add((line.lower(), direction.lower()))
-    return filter_set
-
-
-def get_arrivals(station, filter_criteria_set, earliest_arrival_seconds=0, n=7):
-    try:
-        TFL_STOPPOINT_ARRIVALS_URL = (
-            "https://api.tfl.gov.uk/StopPoint/" + station["id"] + "/Arrivals"
-        )
-        all_arrivals = query_TFL(TFL_STOPPOINT_ARRIVALS_URL)
-
-        if not isinstance(all_arrivals, list):
-            print(
-                f"Warning: TFL API response was not a list. Received: {type(all_arrivals)}"
-            )
-            return []
-
-        # Debugging hook for filtering (as per previous answers)
-        # debug_output = []
-        # _debug_filter_condition_fn = lambda pl, pp, fl, fds: _debug_filter_condition(pl, pp, fl, fds, debug_output)
-
-        filtered_predictions = [
-            p
-            for p in all_arrivals
-            if (
-                (p_line := p.get("lineName", "").lower())
-                and (p_platform := p.get("platformName", "").lower())
-                and p.get("timeToStation", float("inf")) >= earliest_arrival_seconds
-                and any(
-                    # _debug_filter_condition_fn(p_line, p_platform, f_line, f_direction_substring) and # Uncomment for debugging
-                    f_line == p_line and f_direction_substring in p_platform
-                    for f_line, f_direction_substring in filter_criteria_set
-                )
-            )
-        ]
-        # if debug_output: # Uncomment for debugging
-        #    print("\n--- Filtering Debug Output ---")
-        #    for msg in debug_output: print(msg)
-        #    print("--- End Filtering Debug Output ---\n")
-
-        filtered_sorted_arrivals = sorted(
-            filtered_predictions,
-            key=lambda p: p.get("timeToStation", float("inf")),
-        )
-
-        final_display_info = []
-
-        for arrival in filtered_sorted_arrivals[:n]:
-            destination = arrival.get("towards") or arrival.get("destinationName")
-            destination = destination if destination else "Unknown Destination"
-
-            expected_arrival_utc_str = arrival.get("expectedArrival")
-            arrival_dt = None
-
-            if expected_arrival_utc_str:
-                try:
-                    naive_dt = datetime.strptime(
-                        expected_arrival_utc_str, "%Y-%m-%dT%H:%M:%SZ"
-                    )
-                    utc_timezone = pytz.utc
-                    arrival_dt = naive_dt.replace(tzinfo=utc_timezone)
-                except ValueError:
-                    print(
-                        f"Warning: Could not parse expectedArrival: {expected_arrival_utc_str}"
-                    )
-
-            if arrival_dt is not None:
-                final_display_info.append(
-                    {
-                        "destination": destination,
-                        "arrival_time": arrival_dt,
-                        "timeToStation": arrival.get("timeToStation"),
-                        "vehicle_id": arrival.get("vehicleId"),
-                    }
-                )
-
-        # print(f"\n--- get_arrivals() returning {len(final_display_info)} entries ---")
-        # for i, info in enumerate(final_display_info):
-        #     print(
-        #         f"  [{i+1}] To: {info['destination']}, Vehicle ID: {info['vehicle_id']}, Time To Station: {info['timeToStation']/60:.2f} min, Arriving: {info['arrival_time'].strftime('%H:%M:%S %Z')}"
-        #     )
-
-        return final_display_info
-
-    except Exception as e:
-        print(f"An unexpected error occurred in get_arrivals: {e}")
-        return []
-
-
+# --- MAIN EXECUTION LOGIC ---
 def main():
-    global global_display_buffer, global_draw_handle  # Access global vars
+    display_device = None
 
-    display = None  # Initialize display to None outside try-block for cleanup
     try:
         initialize_fonts()
 
+        # --- Display Device Initialization ---
         if IS_RASPBERRY_PI:
-            serial = spi(port=0, device=0, gpio=None)
-            display = ssd1322(serial, rotate=config.displayRotation)
+            serial_interface = spi(port=0, device=0, gpio=None)
+            display_device = ssd1322(serial_interface, rotate=config.displayRotation)
         else:
             print("DEBUG: Initializing Pygame emulator...")
-            display = pygame(
+            display_device = pygame(
                 width=256,
                 height=64,
                 rotate=config.displayRotation,
             )
-            # display.show() # Often called automatically by luma, but explicit is fine.
 
-        global_display_buffer = Image.new(display.mode, display.size)
+        # --- GLOBAL DISPLAY BUFFER AND DRAW HANDLE INITIALIZATION ---
+        global global_display_buffer, global_draw_handle
+        # Create a full-sized Image buffer in 'L' (8-bit grayscale) mode for SSD1322
+        # Use display_device.mode to be compatible with both hardware and emulator
+        global_display_buffer = Image.new(display_device.mode, display_device.size)
         global_draw_handle = ImageDraw.Draw(global_display_buffer)
 
-        station = get_station_id()
-        # Assume config.lines1 and config.lines2 are lists of dictionaries as discussed
+        # --- Initial Data Fetch (Blocking, but only at startup) ---
+        station_info = get_station_id(_session=API_SESSION)
         lines1_filter = get_lines_filter(config.lines1)
-        # lines2_filter = get_lines_filter(config.lines2)
-
-        # Ensure config.earliest_arrival is in seconds now
+        lines2_filter = get_lines_filter(config.lines2)
         earliest_arrival_seconds = config.earliest_arrival
 
-        # Fetch initial arrival data immediately so the board isn't blank
-        print("DEBUG: Fetching initial arrival data...")
+        print("DEBUG: Fetching initial arrival data (main thread, blocking)...")
         current_arrivals1 = get_arrivals(
-            station, lines1_filter, earliest_arrival_seconds
+            station_info, lines1_filter, earliest_arrival_seconds, _session=API_SESSION
+        )
+        current_arrivals2 = get_arrivals(
+            station_info, lines2_filter, earliest_arrival_seconds, _session=API_SESSION
         )
         print("DEBUG: Initial arrival data fetched.")
 
-        draw_initial_display(display, station)
-        time.sleep(2)  # Show welcome screen for a moment
+        # --- Draw Initial Welcome Display ---
+        # This uses the global buffer and performs a full screen update.
+        draw_initial_display(display_device, station_info)
+        time.sleep(2)  # Show welcome screen
 
-        print("Display initialized. Starting main loop...")
+        print("Display initialized. Starting main loop with partial updates...")
 
-        last_api_refresh_time = (
-            time.monotonic()
-        )  # Use monotonic for accurate time differences
+        # --- Start Background API Worker Thread ---
+        worker_thread = threading.Thread(
+            target=fetch_arrivals_worker,
+            args=(
+                station_info,
+                lines1_filter,
+                lines2_filter,
+                earliest_arrival_seconds,
+                config.refresh_interval,
+            ),
+            daemon=True,
+        )
+        worker_thread.start()
 
-        # Define a target framerate/update rate for the display (e.g., 10 frames per second)
+        # --- Main Display Loop Control Variables ---
         target_fps = 10
-        frame_time_budget = 1.0 / target_fps  # e.g., 0.1 seconds per frame
+        frame_time_budget = 1.0 / target_fps
+
+        last_api_refresh_check_time = time.monotonic()
+        last_arrivals_display_time = time.monotonic()
+        arrivals_display_interval = 1.0
+
+        # Pre-calculate estimated clock height for consistent layout and dirty rects
+        estimated_clock_height_plus_yoffset = (
+            fontBold.getbbox("00:00:00")[3] - fontBold.getbbox("00:00:00")[1]
+        ) + 2
+
+        # Bounding box for the clock area (fixed position at bottom)
+        clock_area_rect = (
+            0,  # x_min: covers full width for safe clear of old clock
+            display_device.height
+            - estimated_clock_height_plus_yoffset,  # y_min (clock's top Y)
+            display_device.width,  # width
+            estimated_clock_height_plus_yoffset,  # height
+        )
 
         while True:
-            loop_start_time = (
-                time.monotonic()
-            )  # Measure start of current loop iteration
+            loop_start_time = time.monotonic()
+
+            # --- Check for new data from worker thread (Non-blocking) ---
+            try:
+                new_arrivals1, new_arrivals2 = arrivals_queue.get_nowait()
+                current_arrivals1 = new_arrivals1
+                current_arrivals2 = new_arrivals2
+                print("DEBUG: Main thread consumed new data from queue.")
+            except queue.Empty:
+                pass
 
             # --- API Data Refresh Logic ---
-            current_time_for_api_check = (
-                time.monotonic()
-            )  # Use monotonic for this check too
+            current_monotonic_time = time.monotonic()
             if (
-                current_time_for_api_check - last_api_refresh_time
+                current_monotonic_time - last_api_refresh_check_time
                 >= config.refresh_interval
             ):
                 print(
-                    f"DEBUG: API Refresh interval met. Fetching new data at {datetime.now(pytz.timezone('Europe/London')).strftime('%H:%M:%S')}..."
+                    f"DEBUG: API Refresh interval met. (Worker thread is handling data fetch)."
                 )
-                try:
-                    # Fetching these might take time, blocking the loop
-                    new_arrivals1 = get_arrivals(
-                        station, lines1_filter, earliest_arrival_seconds
-                    )
+                last_api_refresh_check_time = current_monotonic_time
 
-                    # Only update if successful (to avoid clearing valid data if API fails)
-                    current_arrivals1 = new_arrivals1
+            # --- PARTIAL UPDATE DISPLAY LOGIC ---
+            # All drawing happens to the global_draw_handle (on global_display_buffer)
+            # Then display_device.display() is called with the full buffer.
 
-                except Exception as e:
-                    print(f"ERROR: API data fetch failed: {e}. Keeping old data.")
+            # 1. Update Clock (Frequent Update: aims for `target_fps`)
+            # Draw clock to the global buffer (which includes clearing its area)
+            draw_clock(
+                global_draw_handle,
+                display_device.width,
+                display_device.height,
+                2,
+                fontBold,
+                clock_area_rect,
+            )
+            # Send the entire buffer to the display. No cropping is done here.
+            display_device.display(global_display_buffer)
 
-                last_api_refresh_time = (
-                    current_time_for_api_check  # Update API refresh time
+            # 2. Update Arrival Lines (Less Frequent Update: controlled by `arrivals_display_interval`)
+            if (
+                current_monotonic_time - last_arrivals_display_time
+                >= arrivals_display_interval
+            ):
+                all_current_arrivals = current_arrivals1 + current_arrivals2
+                all_current_arrivals_sorted = sorted(
+                    all_current_arrivals,
+                    key=lambda p: p["arrival_time"].timestamp() - time.time(),
                 )
 
-            after_api_fetch_time = time.monotonic()
+                arrivals_display_rect_for_clear = get_arrivals_display_area_rect(
+                    display_device.width,
+                    display_device.height,
+                    estimated_clock_height_plus_yoffset,
+                    FONT_SIZE,
+                    3,
+                )
 
-            print(
-                f"DEBUG: time to fetch API data: {after_api_fetch_time - loop_start_time:.3f}s"
-            )
+                # Draw arrivals to the global buffer (which includes clearing its area)
+                draw_arrival_lines(
+                    global_draw_handle,
+                    display_device.width,
+                    display_device.height,
+                    all_current_arrivals_sorted,
+                    xoffset=15,
+                    row_padding=3,
+                    yoffset=2,
+                    font_size=FONT_SIZE,
+                    earliest_arrival_seconds=earliest_arrival_seconds,
+                    font=font,
+                    fontBold=fontBold,
+                    arrivals_display_rect=arrivals_display_rect_for_clear,  # Pass rect to clear this area
+                )
+                # Send the entire buffer to the display. No cropping is done here.
+                display_device.display(global_display_buffer)
 
-            draw_departure_board(
-                display,
-                current_arrivals1,  # Pass the combined and re-sorted list
-                earliest_arrival=earliest_arrival_seconds,
-                # font=ImageFont.load_default(),
-            )
-
-            print(
-                f"DEBUG: time to draw display: {time.monotonic() - after_api_fetch_time:.3f}s"
-            )
+                last_arrivals_display_time = current_monotonic_time
 
             # --- Loop Timing and Control ---
             loop_end_time = time.monotonic()
             loop_duration = loop_end_time - loop_start_time
 
-            # Sleep to maintain the target FPS
             sleep_time = frame_time_budget - loop_duration
             if sleep_time > 0:
                 time.sleep(sleep_time)
             else:
-                # This warning indicates your loop is too slow to hit the target FPS
-                # Reduce target_fps or optimize drawing/data processing.
                 print(
-                    f"WARNING: Loop took longer than {frame_time_budget:.3f}s! (Actual: {loop_duration:.3f}s)"
+                    f"WARNING: Main loop took longer than {frame_time_budget:.3f}s! (Actual: {loop_duration:.3f}s)"
                 )
-
-            # Optional: Print total loop duration for debugging "skipping seconds"
-            # current_total_loop_duration = time.monotonic() - loop_start_time
-            # print(f"DEBUG: Loop took {current_total_loop_duration:.3f}s. Clock rendered at {datetime.now(pytz.timezone('Europe/London')).strftime('%H:%M:%S')}")
 
     except Exception as e:
         print(f"An error occurred in main: {e}")
-        if display:
+        if display_device:
             try:
-                if hasattr(display, "cleanup"):
+                if hasattr(display_device, "cleanup"):
                     print("DEBUG: Calling display.cleanup()...")
-                    display.cleanup()
+                    display_device.cleanup()
+                elif hasattr(display_device, "hide"):
+                    print("DEBUG: Calling display.hide()...")
+                    display_device.hide()
             except Exception as ce:
                 print(f"DEBUG: Error during display cleanup: {ce}")
         sys.exit(1)
 
 
+# --- APPLICATION ENTRY POINT ---
 if __name__ == "__main__":
+
     main()
