@@ -163,6 +163,7 @@ def get_arrivals(
             "https://api.tfl.gov.uk/StopPoint/" + station["id"] + "/Arrivals"
         )
         all_arrivals = query_TFL(TFL_STOPPOINT_ARRIVALS_URL, _session=_session)
+        # print(all_arrivals)
         if not isinstance(all_arrivals, list):
             return []
         filtered_predictions = [
@@ -203,7 +204,7 @@ def get_arrivals(
                         "destination": destination,
                         "arrival_time": arrival_dt,
                         "timeToStation": arrival.get("timeToStation"),
-                        "vehicle_id": arrival.get("vehicleId"),
+                        "lineName": arrival.get("lineName"),
                     }
                 )
         return final_display_info
@@ -332,6 +333,17 @@ def draw_arrival_lines(
                 font=font,
                 fill="yellow",
             )
+
+            draw_obj.text(
+                (
+                    display_device.width - config.display_settings["xoffset"] - 80,
+                    ypos,
+                ),
+                text=arrival["lineName"],
+                font=font,
+                fill="yellow",
+            )
+
             draw_obj.text(
                 (
                     display_device.width
