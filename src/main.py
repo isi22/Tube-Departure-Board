@@ -296,17 +296,11 @@ def draw_clock(
 
     clock_str = get_current_london_datetime().strftime("%H:%M:%S")
 
-    bbox_clock = fontBold.getbbox(clock_str)
-    clock_width = bbox_clock[2] - bbox_clock[0]
-    clock_height = bbox_clock[3] - bbox_clock[1]
-    x_offset_clock = (display_width - clock_width) / 2
-    y_offset_clock = display_height - (clock_height + yoffset)
-
-    print(f"DEBUG Clock: Calculated clock position in {time.monotonic() - t2:.3f}s.")
+    print(f"DEBUG Clock: Got clock string in {time.monotonic() - t2:.3f}s.")
 
     t3 = time.monotonic()
     draw_obj.text(
-        (x_offset_clock, y_offset_clock),
+        (clock_display_rect[0], clock_display_rect[1]),
         text=clock_str,
         font=fontBold,
         fill="yellow",
@@ -538,19 +532,22 @@ def main():
         # --- GLOBAL ARRIVAL LINES AND CLOCK RECTANGLES INITIALIZATION ---
         global arrivals_display_rect, clock_display_rect
         bbox_clock = fontBold.getbbox("00:00:00")
-        estimated_clock_height = (
-            bbox_clock[3] - bbox_clock[1]
-        ) + 2  # plus 2 for padding
+        clock_width = bbox_clock[2] - bbox_clock[0]
+        clock_height = bbox_clock[3] - bbox_clock[1]
+        yoffset = 2
+        padding = 3
+
         arrivals_display_rect = (
             0,
             0,
             display_device.size[0],
-            display_device.size[1] - estimated_clock_height,
+            display_device.size[1]
+            - (clock_height + yoffset + padding),  # minus 2 for padding,
         )
         clock_display_rect = (
-            0,
-            display_device.size[1] - estimated_clock_height,
-            display_device.size[0],
+            (display_device.size[0] - clock_width) / 2,
+            display_device.size[1] - (clock_height + yoffset),
+            (display_device.size[0] + clock_width) / 2,
             display_device.size[1],
         )
 
