@@ -34,9 +34,6 @@ if not IS_RASPBERRY_PI:
 # --- GLOBAL FONT DEFINITIONS ---
 font: ImageFont.FreeTypeFont = None
 fontBold: ImageFont.FreeTypeFont = None
-fontBoldTall: ImageFont.FreeTypeFont = None
-FONT_SIZE: int = 10
-
 
 # --- GLOBAL API SESSION & QUEUES FOR THREAD COMMUNICATION ---
 API_SESSION = requests.Session()
@@ -46,6 +43,11 @@ rendered_frames_queue = queue.Queue(maxsize=1)
 # --- GLOBAL BUFFER FOR FINAL DISPLAY OUTPUT ---
 display_output_buffer: Image.Image = None
 
+# --- GLOBAL DISPLAY DEVICE ---
+display_device = None  # Initialize display_device to None
+
+# --- GLOBAL DEFINITION OF ARRIVALS AREA AND CLOCK AREA OF DISPLAY ---
+arrivals_display_rect, clock_display_rect = None, None  # Initialize display rectangles
 
 # --- HELPER FUNCTIONS ---
 
@@ -62,20 +64,19 @@ def make_Font(name: str, size: int) -> ImageFont.FreeTypeFont:
 
 
 def initialize_fonts():
-    global font, fontBold, fontBoldTall
-    font = make_Font("Dot Matrix Regular.ttf", FONT_SIZE)
-    fontBold = make_Font("Dot Matrix Bold.ttf", FONT_SIZE)
-    fontBoldTall = make_Font("Dot Matrix Bold Tall.ttf", 2 * FONT_SIZE)
+    global font, fontBold
+    font = make_Font("Dot Matrix Regular.ttf", config.fontSize)
+    fontBold = make_Font("Dot Matrix Bold.ttf", config.fontSize)
 
 
-def get_time_to_arrival(arrival, font, earliest_arrival=0):
+def get_time_to_arrival(arrival, font):
     """Calculates the time to arrival and formats it for display."""
 
     seconds_to_arrival = int(arrival["arrival_time"].timestamp() - time.time())
     time_to_arrival = " "  # Default value if not displayed
     time_width = 0  # Default value if not displayed
 
-    if seconds_to_arrival >= earliest_arrival:
+    if seconds_to_arrival >= config.earliest_arrival * 60:
         display_check = True
         minutes_to_arrival = seconds_to_arrival / 60
         # print(minutes_to_arrival)
@@ -96,18 +97,6 @@ def get_time_to_arrival(arrival, font, earliest_arrival=0):
     else:
         display_check = False
     return time_to_arrival, time_width, display_check
-
-
-def get_time_to_station_safe(prediction_item: dict) -> float:
-    try:
-        return float(prediction_item.get("timeToStation", math.inf))
-    except (ValueError, TypeError):
-        return math.inf
-
-
-def get_current_london_datetime() -> datetime:
-    london_tz = pytz.timezone("Europe/London")
-    return datetime.now(london_tz)
 
 
 # --- API INTERACTION FUNCTIONS ---
@@ -166,7 +155,6 @@ def get_lines_filter(lines_config_list: list) -> set:
 def get_arrivals(
     station: dict,
     filter_criteria_set: set,
-    earliest_arrival_seconds: int = 0,
     n: int = 7,
     _session: requests.Session = None,
 ) -> list:
@@ -183,7 +171,7 @@ def get_arrivals(
             if (
                 (p_line := p.get("lineName", "").lower())
                 and (p_platform := p.get("platformName", "").lower())
-                and (get_time_to_station_safe(p)) >= earliest_arrival_seconds
+                and p.get("timeToStation", float("inf")) >= config.earliest_arrival * 60
                 and any(
                     f_line == p_line and f_direction_substring in p_platform
                     for f_line, f_direction_substring in filter_criteria_set
@@ -231,12 +219,8 @@ def get_arrivals(
 
 def draw_centered_text_rows(
     draw_obj: ImageDraw.ImageDraw,
-    display_width: int,
-    display_height: int,
     rows_text: list[str],
     font: ImageFont.FreeTypeFont,
-    fill_color: str = "yellow",
-    row_spacing: int = 3,
 ):
     """Draws multiple lines of text, centered horizontally and stacked vertically, onto the given draw object."""
     row_dimensions = []
@@ -249,21 +233,22 @@ def draw_centered_text_rows(
             {"content": row_content, "width": width, "height": height}
         )
         total_text_height += height
-    total_height_with_spacing = total_text_height + (len(rows_text) - 1) * row_spacing
-    start_y_offset = (display_height - total_text_height) / 2
+    total_height_with_spacing = (
+        total_text_height
+        + (len(rows_text) - 1) * config.display_settings["row_padding"]
+    )
+    start_y_offset = (display_device.height - total_text_height) / 2
     current_y = start_y_offset
     for row_data in row_dimensions:
         row_content = row_data["content"]
         row_width = row_data["width"]
         row_height = row_data["height"]
-        x_offset = (display_width - row_width) / 2
-        draw_obj.text(
-            (x_offset, current_y), text=row_content, font=font, fill=fill_color
-        )
-        current_y += row_height + row_spacing
+        x_offset = (display_device.width - row_width) / 2
+        draw_obj.text((x_offset, current_y), text=row_content, font=font, fill="yellow")
+        current_y += row_height + config.display_settings["row_padding"]
 
 
-def draw_initial_display(display_device: object, station_info: dict):
+def draw_initial_display(station_info: dict):
     """
     Draws the initial welcome screen as a full screen update.
     This clears the entire display via luma's canvas.
@@ -271,61 +256,38 @@ def draw_initial_display(display_device: object, station_info: dict):
     with canvas(display_device) as draw_obj:  # This clears the whole display
         draw_centered_text_rows(
             draw_obj,
-            display_device.width,
-            display_device.height,
             ["Welcome to", station_info["name"]],
             fontBold,
-            fill_color="yellow",
-            row_spacing=3,
         )
 
 
 def draw_clock(
     draw_obj: ImageDraw.ImageDraw,
-    display_width: int,
-    display_height: int,
-    yoffset: int,
-    fontBold: ImageFont.FreeTypeFont,
+    font: ImageFont.FreeTypeFont,
 ):
     """
     Draws the live clock at the bottom of the display onto the given draw object.
     It's responsible for drawing the text, but not for clearing or display update.
     """
-    t1 = time.monotonic()
     # Clear the entire clock display area on the buffer to black
     draw_obj.rectangle(
         clock_display_rect,
         fill="black",
     )
-    print(f"DEBUG Clock: Cleared clock area in {time.monotonic() - t1:.3f}s.")
 
-    t2 = time.monotonic()
+    clock_str = datetime.now(pytz.timezone("Europe/London")).strftime("%H:%M:%S")
 
-    clock_str = get_current_london_datetime().strftime("%H:%M:%S")
-
-    print(f"DEBUG Clock: Got clock string in {time.monotonic() - t2:.3f}s.")
-
-    t3 = time.monotonic()
     draw_obj.text(
         (clock_display_rect[0], clock_display_rect[1]),
         text=clock_str,
-        font=fontBold,
+        font=font,
         fill="yellow",
     )
-
-    print(f"DEBUG Clock: Drawn clock text in {time.monotonic() - t3:.3f}s.")
 
 
 def draw_arrival_lines(
     draw_obj: ImageDraw.ImageDraw,
-    display_width: int,
     arrivals: list,
-    xoffset: int,
-    row_padding: int,
-    space_num_destination: int,
-    yoffset: int,
-    font_size: int,
-    earliest_arrival_seconds: int,
     font: ImageFont.FreeTypeFont,
 ):
     """
@@ -344,30 +306,39 @@ def draw_arrival_lines(
     row_num = 1
 
     for arrival in arrivals:
-        time_to_arrival, time_width, display_check = get_time_to_arrival(
-            arrival, font, earliest_arrival_seconds
-        )
+        time_to_arrival, time_width, display_check = get_time_to_arrival(arrival, font)
 
         if display_check:
-            ypos = (row_num - 1) * (font_size + row_padding) + yoffset
+            ypos = (row_num - 1) * (
+                config.fontSize + config.display_settings["row_padding"]
+            ) + config.display_settings["yoffset"]
 
             if ypos >= max_y_for_arrivals:
                 break
 
             draw_obj.text(
-                (xoffset, ypos),
+                (config.display_settings["xoffset"], ypos),
                 text=str(row_num),
                 font=font,
                 fill="yellow",
             )
             draw_obj.text(
-                (xoffset + space_num_destination, ypos),
+                (
+                    config.display_settings["xoffset"]
+                    + config.display_settings["indent"],
+                    ypos,
+                ),
                 text=arrival["destination"],
                 font=font,
                 fill="yellow",
             )
             draw_obj.text(
-                (display_width - time_width - xoffset, ypos),
+                (
+                    display_device.width
+                    - time_width
+                    - config.display_settings["xoffset"],
+                    ypos,
+                ),
                 text=time_to_arrival,
                 font=font,
                 fill="yellow",
@@ -382,7 +353,6 @@ def draw_arrival_lines(
 def api_fetch_worker(
     station_info: dict,
     lines_filter: set,
-    earliest_arrival_seconds: int,
     refresh_interval_seconds: int,
 ):
     """
@@ -392,12 +362,11 @@ def api_fetch_worker(
     while True:
         try:
             print(
-                f"DEBUG API Fetch Worker: Fetching new raw API data at {get_current_london_datetime().strftime('%H:%M:%S')}..."
+                f"DEBUG API Fetch Worker: Fetching new raw API data at {datetime.now().strftime('%H:%M:%S')}..."
             )
             new_arrivals = get_arrivals(
                 station_info,
                 lines_filter,
-                earliest_arrival_seconds,
                 _session=API_SESSION,
             )
 
@@ -422,10 +391,7 @@ def api_fetch_worker(
         time.sleep(refresh_interval_seconds)
 
 
-def arrival_lines_worker(
-    display_props: dict,
-    earliest_arrival_seconds: int,
-):
+def arrival_lines_worker():
     """
     This thread is responsible for drawing all display elements onto an off-screen buffer.
     It takes raw API data from the API fetcher and renders full frames (clock + arrivals),
@@ -434,7 +400,7 @@ def arrival_lines_worker(
     """
 
     # Private buffer and drawing handle for this worker thread
-    render_buffer = Image.new(display_props["mode"], display_props["size"])
+    render_buffer = Image.new(display_device.mode, display_device.size)
     render_draw_handle = ImageDraw.Draw(render_buffer)
 
     # Variables for state of arrivals data consumed from API Fetch Worker
@@ -458,14 +424,7 @@ def arrival_lines_worker(
         # --- Draw Arrival Lines  ---
         draw_arrival_lines(
             render_draw_handle,
-            display_props["size"][0],
             current_arrivals_data,
-            xoffset=15,
-            row_padding=3,
-            space_num_destination=13,
-            yoffset=2,
-            font_size=FONT_SIZE,
-            earliest_arrival_seconds=earliest_arrival_seconds,
             font=font,
         )
 
@@ -497,12 +456,14 @@ def arrival_lines_worker(
 
 # --- MAIN EXECUTION LOGIC (PRIMARY DISPLAY THREAD) ---
 def main():
-    display_device = None
+
+    global display_device
 
     try:
         initialize_fonts()
 
         # --- Display Device Initialization ---
+
         if IS_RASPBERRY_PI:
             serial_interface = spi(port=0, device=0, gpio=None)
             display_device = ssd1322(serial_interface, rotate=config.displayRotation)
@@ -515,21 +476,23 @@ def main():
         bbox_clock = fontBold.getbbox("00:00:00")
         clock_width = bbox_clock[2] - bbox_clock[0]
         clock_height = bbox_clock[3] - bbox_clock[1]
-        yoffset = 2
-        padding = 3
 
         arrivals_display_rect = (
             0,
             0,
-            display_device.size[0],
-            display_device.size[1]
-            - (clock_height + yoffset + padding),  # minus 2 for padding,
+            display_device.width,
+            display_device.height
+            - (
+                clock_height
+                + config.display_settings["yoffset"]
+                + config.display_settings["row_padding"]
+            ),  # minus 2 for padding,
         )
         clock_display_rect = (
-            (display_device.size[0] - clock_width) / 2,
-            display_device.size[1] - (clock_height + yoffset),
-            (display_device.size[0] + clock_width) / 2,
-            display_device.size[1],
+            (display_device.width - clock_width) / 2,
+            display_device.height - (clock_height + config.display_settings["yoffset"]),
+            (display_device.width + clock_width) / 2,
+            display_device.height,
         )
 
         # --- GLOBAL DISPLAY OUTPUT BUFFER INITIALIZATION ---
@@ -538,20 +501,19 @@ def main():
 
         # --- Initial Data Fetch (Blocking, but only at startup) ---
         station_info = get_station_id(_session=API_SESSION)
-        lines_filter = get_lines_filter(config.lines1)
-        earliest_arrival_seconds = config.earliest_arrival
+        lines_filter = get_lines_filter(config.lines)
 
         print("DEBUG Main: Fetching initial arrival data (main thread, blocking)...")
         # Initialize current_arrivals lists. These will be updated by the worker thread.
         global current_arrivals
         current_arrivals = get_arrivals(
-            station_info, lines_filter, earliest_arrival_seconds, _session=API_SESSION
+            station_info, lines_filter, _session=API_SESSION
         )
 
         print("DEBUG Main: Initial arrival data fetched.")
 
         # --- Draw Initial Welcome Display ---
-        draw_initial_display(display_device, station_info)
+        draw_initial_display(station_info)
         time.sleep(2)
 
         print("DEBUG Main: Display initialized. Starting multi-threaded main loop...")
@@ -562,7 +524,6 @@ def main():
             args=(
                 station_info,
                 lines_filter,
-                earliest_arrival_seconds,
                 config.refresh_interval,
             ),
             daemon=True,
@@ -571,10 +532,6 @@ def main():
         print("DEBUG Main: API Fetch Worker started.")
         arrival_lines_thread = threading.Thread(
             target=arrival_lines_worker,
-            args=(
-                {"mode": display_device.mode, "size": display_device.size},
-                earliest_arrival_seconds,
-            ),
             daemon=True,
         )
         arrival_lines_thread.start()
@@ -603,11 +560,8 @@ def main():
             t1 = time.monotonic()
             draw_clock(
                 render_draw_handle,
-                display_device.size[0],
-                display_device.size[1],
-                2,
-                fontBold,
-            )  # yoffset=2
+                font=fontBold,
+            )
             print(f"DEBUG Main: Clock drawn in {time.monotonic() - t1:.3f}s.")
 
             t2 = time.monotonic()
@@ -625,7 +579,7 @@ def main():
                 time.sleep(sleep_time)
             else:
                 print(
-                    f"WARNING Main: Loop took longer than {frame_time_budget:.3f}s! (Actual: {loop_duration:.3f}s) @ {get_current_london_datetime().strftime('%H:%M:%S')}. Physical FPS capped by display.display() time."
+                    f"WARNING Main: Loop took longer than {frame_time_budget:.3f}s! (Actual: {loop_duration:.3f}s) @ {datetime.now().strftime('%H:%M:%S')}. Physical FPS capped by display.display() time."
                 )
 
     except Exception as e:
