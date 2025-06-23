@@ -335,7 +335,7 @@ def draw_arrival_lines(
                 fill="yellow",
             )
 
-            if len(config.lines) > 1:
+            if len(config.lines1) > 1:
                 # If multiple lines are configured, display the line name
                 # at the end of the row.
                 draw_obj.text(
@@ -368,7 +368,8 @@ def draw_arrival_lines(
 
 def api_fetch_worker(
     station_info: dict,
-    lines_filter: set,
+    lines_filter1: set,
+    lines_filter2: set,
     refresh_interval_seconds: int,
 ):
     """
@@ -380,6 +381,15 @@ def api_fetch_worker(
             print(
                 f"DEBUG API Fetch Worker: Fetching new raw API data at {datetime.now().strftime('%H:%M:%S')}..."
             )
+
+            if IS_RASPBERRY_PI:
+                if GPIO.input(config.switch_GPIO_pin):
+                    lines_filter = lines_filter1
+                else:
+                    lines_filter = lines_filter2
+            else:
+                lines_filter = lines_filter1
+
             new_arrivals = get_arrivals(
                 station_info,
                 lines_filter,
@@ -473,14 +483,12 @@ def arrival_lines_worker():
 # --- MAIN EXECUTION LOGIC (PRIMARY DISPLAY THREAD) ---
 def main():
 
-    global display_device
-
     try:
 
         initialize_fonts()
 
         # --- Display Device Initialization ---
-
+        global display_device
         if IS_RASPBERRY_PI:
             serial_interface = spi(port=0, device=0, gpio=None)
             display_device = ssd1322(serial_interface, rotate=config.displayRotation)
@@ -496,9 +504,9 @@ def main():
         clock_width = bbox_clock[2] - bbox_clock[0]
         clock_height = bbox_clock[3] - bbox_clock[1]
 
-        if len(config.lines) > 1:
+        if len(config.lines1) > 1:
             line_width = 0
-            for line in config.lines:
+            for line in config.lines1:
                 bbox_line = font.getbbox(line["line"])
                 line_width = max(line_width, bbox_line[2] - bbox_line[0])
             bbox_arrival_time = font.getbbox("XX min")
@@ -535,14 +543,15 @@ def main():
 
         # --- Initial Data Fetch (Blocking, but only at startup) ---
         station_info = get_station_id(_session=API_SESSION)
-        lines_filter = get_lines_filter(config.lines)
+        lines_filter1 = get_lines_filter(config.lines1)
+        lines_filter2 = get_lines_filter(config.lines2)
 
-        print("DEBUG Main: Fetching initial arrival data (main thread, blocking)...")
-        # Initialize current_arrivals lists. These will be updated by the worker thread.
-        global current_arrivals
-        current_arrivals = get_arrivals(
-            station_info, lines_filter, _session=API_SESSION
-        )
+        # print("DEBUG Main: Fetching initial arrival data (main thread, blocking)...")
+        # # Initialize current_arrivals lists. These will be updated by the worker thread.
+        # global current_arrivals
+        # current_arrivals = get_arrivals(
+        #     station_info, lines_filter, _session=API_SESSION
+        # )
 
         print("DEBUG Main: Initial arrival data fetched.")
 
@@ -557,7 +566,8 @@ def main():
             target=api_fetch_worker,
             args=(
                 station_info,
-                lines_filter,
+                lines_filter1,
+                lines_filter2,
                 config.refresh_interval,
             ),
             daemon=True,
@@ -576,9 +586,6 @@ def main():
         frame_time_budget = 1.0 / TARGET_DISPLAY_FPS
 
         while True:
-
-            if IS_RASPBERRY_PI:
-                print(GPIO.input(config.switch_GPIO_pin))
 
             loop_start_time = time.monotonic()
 
