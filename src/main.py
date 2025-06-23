@@ -695,14 +695,9 @@ def main():
             if sleep_time > 0:
                 time.sleep(sleep_time)
             else:
-                if (
-                    current_monotonic_time - last_debug_print_time
-                    > debug_print_interval
-                ):
-                    print(
-                        f"WARNING Main: Loop took longer than {frame_time_budget:.3f}s! (Actual: {loop_duration:.3f}s) @ {get_current_london_datetime().strftime('%H:%M:%S')}. Physical FPS capped by display.display() time."
-                    )
-                    last_debug_print_time = current_monotonic_time
+                print(
+                    f"WARNING Main: Loop took longer than {frame_time_budget:.3f}s! (Actual: {loop_duration:.3f}s) @ {get_current_london_datetime().strftime('%H:%M:%S')}. Physical FPS capped by display.display() time."
+                )
 
     except Exception as e:
         print(f"An error occurred in main: {e}")
