@@ -326,7 +326,7 @@ def draw_arrival_lines(
             draw_obj.text(
                 (
                     config.display_settings["xoffset"]
-                    + config.display_settings["indent"],
+                    + config.display_settings["space_arrival_num_dest_name"],
                     ypos,
                 ),
                 text=arrival["destination"],
@@ -334,15 +334,18 @@ def draw_arrival_lines(
                 fill="yellow",
             )
 
-            draw_obj.text(
-                (
-                    display_device.width - config.display_settings["xoffset"] - 80,
-                    ypos,
-                ),
-                text=arrival["lineName"],
-                font=font,
-                fill="yellow",
-            )
+            if len(config.lines) > 1:
+                # If multiple lines are configured, display the line name
+                # at the end of the row.
+                draw_obj.text(
+                    (
+                        config.display_settings["xoffset_line_name"],
+                        ypos,
+                    ),
+                    text=arrival["lineName"],
+                    font=font,
+                    fill="yellow",
+                )
 
             draw_obj.text(
                 (
@@ -488,6 +491,21 @@ def main():
         bbox_clock = fontBold.getbbox("00:00:00")
         clock_width = bbox_clock[2] - bbox_clock[0]
         clock_height = bbox_clock[3] - bbox_clock[1]
+
+        if len(config.lines) > 1:
+            line_width = 0
+            for line in config.lines:
+                bbox_line = font.getbbox(line["line"])
+                line_width = max(line_width, bbox_line[2] - bbox_line[0])
+            bbox_arrival_time = font.getbbox("XX min")
+            arrival_time_width = bbox_arrival_time[2] - bbox_arrival_time[0]
+            config.display_settings["xoffset_line_name"] = (
+                display_device.width
+                - arrival_time_width
+                - line_width
+                - config.display_settings["xoffset"]
+                - config.display_settings["space_line_name_arrival_time"]
+            )
 
         arrivals_display_rect = (
             0,

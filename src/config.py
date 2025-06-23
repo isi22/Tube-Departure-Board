@@ -17,7 +17,8 @@ display_settings = {
     "xoffset": 3,  # Padding at left and right of display edge
     "yoffset": 3,  # Padding at top and bottom of display edge
     "row_padding": 3,  # Padding between rows"
-    "indent": 13,  # Space between arrival number and destination name
+    "space_arrival_num_dest_name": 13,  # Space between arrival number and destination name
+    "space_line_name_arrival_time": 25,  # Space between line name and arrival time
 }
 
 fontSize = 10  # Font size for the display, 10 is a good size for 128x64 displays
