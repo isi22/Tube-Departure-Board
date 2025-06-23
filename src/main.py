@@ -172,7 +172,7 @@ def draw_departure_board(
             clock_height + yoffset + FONT_SIZE + row_padding
         )  # Space above clock
 
-        for arrival in arrivals:
+        for arrival in arrivals[0:2]:
             time_to_arrival, time_width, display_check = get_time_to_arrival(
                 arrival, font, earliest_arrival
             )
