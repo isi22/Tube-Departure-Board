@@ -7,6 +7,8 @@ import json
 from datetime import datetime
 import math
 import pytz
+from PIL import ImageFont, ImageDraw, Image
+from luma.core.render import canvas
 
 # Conditional imports for display driver vs. emulator
 if sys.platform.startswith("linux") and os.uname().machine.startswith("arm"):
@@ -32,9 +34,6 @@ else:
     from luma.emulator.device import pygame
 
     IS_RASPBERRY_PI = False
-
-from PIL import ImageFont, ImageDraw, Image
-from luma.core.render import canvas
 
 # --- Global Font Definitions (Loaded once) ---
 font = None
@@ -186,7 +185,7 @@ def draw_departure_board(
             print(
                 f"DEBUG: time to get time_to_arrival: {time.monotonic() - start_time_to_arrival:.3f}s"
             )
-            start_row_time = time.monotonic()
+
             if display_check:
                 ypos = (row_num - 1) * (FONT_SIZE + row_padding) + yoffset
 
@@ -197,6 +196,7 @@ def draw_departure_board(
                 # Draw row number (optional, often implied by order)
                 # draw.text((xoffset, ypos), text=str(row_num), font=font, fill="yellow")
 
+                start_row_time = time.monotonic()
                 # Draw destination (adjust xoffset for number removal if desired)
                 draw.text(
                     (xoffset, ypos),  # Starts at xoffset
