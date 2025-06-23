@@ -578,7 +578,7 @@ def main():
         while True:
 
             if IS_RASPBERRY_PI:
-                print(GPIO.output(0))
+                print(GPIO.input(0))
 
             loop_start_time = time.monotonic()
 
