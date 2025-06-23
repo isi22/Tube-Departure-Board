@@ -144,7 +144,7 @@ def draw_departure_board(
     space_num_destination=13,
     yoffset=2,
     earliest_arrival=0,
-    font=font,
+    # font=font,
 ):
     with canvas(display) as draw:
 
@@ -173,7 +173,7 @@ def draw_departure_board(
             clock_height + yoffset + FONT_SIZE + row_padding
         )  # Space above clock
 
-        for arrival in arrivals[0:2]:
+        for arrival in arrivals:
             time_to_arrival, time_width, display_check = get_time_to_arrival(
                 arrival, font, earliest_arrival
             )
@@ -188,6 +188,7 @@ def draw_departure_board(
                 # Draw row number (optional, often implied by order)
                 # draw.text((xoffset, ypos), text=str(row_num), font=font, fill="yellow")
 
+                t1 = time.monotonic()
                 # Draw destination (adjust xoffset for number removal if desired)
                 draw.text(
                     (xoffset, ypos),  # Starts at xoffset
@@ -204,6 +205,9 @@ def draw_departure_board(
                     # fill="yellow",
                 )
                 row_num += 1
+                print(
+                    f"DEBUG: Time to draw row {row_num}: {time.monotonic() - t1:.3f}s"
+                )
 
 
 def query_TFL(url: str, params: dict = None, max_retries: int = 3):
