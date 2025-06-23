@@ -10,6 +10,7 @@ import math
 import pytz
 import threading
 import queue
+import RPi.GPIO as GPIO
 
 from PIL import ImageFont, ImageDraw, Image
 from luma.core.render import canvas
@@ -475,6 +476,7 @@ def main():
     global display_device
 
     try:
+
         initialize_fonts()
 
         # --- Display Device Initialization ---
@@ -482,6 +484,8 @@ def main():
         if IS_RASPBERRY_PI:
             serial_interface = spi(port=0, device=0, gpio=None)
             display_device = ssd1322(serial_interface, rotate=config.displayRotation)
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(0, GPIO.OUT)
         else:
             print("DEBUG Main: Initializing Pygame emulator...")
             display_device = pygame(width=256, height=64, rotate=config.displayRotation)
@@ -572,6 +576,10 @@ def main():
         frame_time_budget = 1.0 / TARGET_DISPLAY_FPS
 
         while True:
+
+            if IS_RASPBERRY_PI:
+                print(GPIO.input(2))
+
             loop_start_time = time.monotonic()
 
             # --- Get new rendered frame from Render Worker (Non-blocking) ---
