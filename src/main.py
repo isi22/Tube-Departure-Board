@@ -69,25 +69,32 @@ def initialize_fonts():
 
 
 def get_time_to_arrival(arrival, font, earliest_arrival=0):
+    """Calculates the time to arrival and formats it for display."""
+
     seconds_to_arrival = int(arrival["arrival_time"].timestamp() - time.time())
-    time_to_arrival = " "
-    time_width = 0
-    display_check = False
+    time_to_arrival = " "  # Default value if not displayed
+    time_width = 0  # Default value if not displayed
 
     if seconds_to_arrival >= earliest_arrival:
         display_check = True
         minutes_to_arrival = seconds_to_arrival / 60
+        # print(minutes_to_arrival)
 
+        # Format the time string
         if minutes_to_arrival > 1:
-            time_to_arrival = f"{math.floor(minutes_to_arrival + 0.5)} min"
-        elif seconds_to_arrival > 0:
-            time_to_arrival = f"{seconds_to_arrival} s"
+            time_to_arrival = (
+                f"{math.floor(minutes_to_arrival + 0.5)} min"
+                # + "   "
+                # + str(arrival["arrival_time"])
+            )
         else:
-            time_to_arrival = "due"
+            time_to_arrival = "due"  # + "   " + str(arrival["arrival_time"])
 
         bbox = font.getbbox(time_to_arrival)
         time_width = bbox[2] - bbox[0]
 
+    else:
+        display_check = False
     return time_to_arrival, time_width, display_check
 
 
@@ -315,6 +322,7 @@ def draw_arrival_lines(
     arrivals: list,
     xoffset: int,
     row_padding: int,
+    space_num_destination: int,
     yoffset: int,
     font_size: int,
     earliest_arrival_seconds: int,
@@ -324,6 +332,7 @@ def draw_arrival_lines(
     Draws the list of arrival predictions on the main board area onto the global buffer.
     It clears the entire arrivals area on the buffer before redrawing.
     """
+
     # Clear the entire arrivals display area on the buffer to black
     draw_obj.rectangle(
         arrivals_display_rect,
@@ -332,7 +341,7 @@ def draw_arrival_lines(
 
     max_y_for_arrivals = arrivals_display_rect[3]
 
-    row_num = 0
+    row_num = 1
 
     for arrival in arrivals:
         time_to_arrival, time_width, display_check = get_time_to_arrival(
@@ -340,55 +349,26 @@ def draw_arrival_lines(
         )
 
         if display_check:
-            ypos = row_num * (font_size + row_padding) + yoffset
+            ypos = (row_num - 1) * (font_size + row_padding) + yoffset
 
             if ypos >= max_y_for_arrivals:
                 break
 
-            destination_text = arrival["destination"]
-
-            target_time_end_x = display_width - xoffset
-            time_text_start_x = target_time_end_x - time_width
-            dest_text_width = (
-                font.getbbox(destination_text)[2] - font.getbbox(destination_text)[0]
-            )
-            dest_text_end_x = xoffset + dest_text_width
-
-            char_space_width = font.getbbox(" ")[2] - font.getbbox(" ")[0]
-            if char_space_width == 0:
-                char_space_width = 1
-            space_needed_pixels = time_text_start_x - dest_text_end_x
-            num_spaces = max(1, math.ceil(space_needed_pixels / char_space_width))
-            combined_line_text = (
-                f"{destination_text}{' ' * num_spaces}{time_to_arrival}"
-            )
-
-            max_line_width = display_width - (2 * xoffset)
-            bbox_combined = font.getbbox(combined_line_text)
-
-            if (bbox_combined[2] - bbox_combined[0]) > max_line_width:
-                avg_char_width = font.getbbox("A")[2] - font.getbbox("A")[0]
-                if avg_char_width == 0:
-                    avg_char_width = 1
-                space_for_dest_pixels = (
-                    max_line_width - time_width - (num_spaces * char_space_width)
-                )
-                max_dest_chars = math.floor(space_for_dest_pixels / avg_char_width)
-
-                if max_dest_chars > 3:
-                    destination_text = destination_text[: max_dest_chars - 3] + "..."
-                elif max_dest_chars > 0:
-                    destination_text = destination_text[:max_dest_chars]
-                else:
-                    destination_text = ""
-
-                combined_line_text = (
-                    f"{destination_text}{' ' * num_spaces}{time_to_arrival}"
-                )
-
             draw_obj.text(
                 (xoffset, ypos),
-                text=combined_line_text,
+                text=str(row_num),
+                font=font,
+                fill="yellow",
+            )
+            draw_obj.text(
+                (xoffset + space_num_destination, ypos),
+                text=arrival["destination"],
+                font=font,
+                fill="yellow",
+            )
+            draw_obj.text(
+                (display_width - time_width - xoffset, ypos),
+                text=time_to_arrival,
                 font=font,
                 fill="yellow",
             )
@@ -482,6 +462,7 @@ def arrival_lines_worker(
             current_arrivals_data,
             xoffset=15,
             row_padding=3,
+            space_num_destination=13,
             yoffset=2,
             font_size=FONT_SIZE,
             earliest_arrival_seconds=earliest_arrival_seconds,
