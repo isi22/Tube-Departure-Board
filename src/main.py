@@ -217,6 +217,9 @@ def draw_departure_board(
                 print(
                     f"DEBUG: time to draw row {row_num}: {time.monotonic() - start_row_time:.3f}s"
                 )
+        end_of_display_time = time.monotonic()
+
+    print(f"DEBUG: time to draw display: {time.monotonic() - end_of_display_time:.3f}s")
 
 
 def query_TFL(url: str, params: dict = None, max_retries: int = 3):
