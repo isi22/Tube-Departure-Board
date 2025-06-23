@@ -207,9 +207,7 @@ def draw_departure_board(
 def query_TFL(url: str, params: dict = None, max_retries: int = 3):
     for retry_attempt in range(max_retries):
         try:
-            t1 = time.time()
             response = requests.get(url, params=params, timeout=10)
-            print(f"time taken for request: {(time.time()-t1):.2f} seconds")
             response.raise_for_status()
             json_response = response.json()
             if json_response:
@@ -366,7 +364,7 @@ def main():
         station = get_station_id()
         # Assume config.lines1 and config.lines2 are lists of dictionaries as discussed
         lines1_filter = get_lines_filter(config.lines1)
-        lines2_filter = get_lines_filter(config.lines2)
+        # lines2_filter = get_lines_filter(config.lines2)
 
         # Ensure config.earliest_arrival is in seconds now
         earliest_arrival_seconds = config.earliest_arrival
@@ -376,9 +374,6 @@ def main():
         current_arrivals1 = get_arrivals(
             station, lines1_filter, earliest_arrival_seconds
         )
-        # current_arrivals2 = get_arrivals(
-        #     station, lines2_filter, earliest_arrival_seconds
-        # )
         print("DEBUG: Initial arrival data fetched.")
 
         draw_initial_display(display, station)
@@ -415,16 +410,10 @@ def main():
                     new_arrivals1 = get_arrivals(
                         station, lines1_filter, earliest_arrival_seconds
                     )
-                    # new_arrivals2 = get_arrivals(
-                    #     station, lines2_filter, earliest_arrival_seconds
-                    # )
 
                     # Only update if successful (to avoid clearing valid data if API fails)
                     current_arrivals1 = new_arrivals1
-                    # current_arrivals2 = new_arrivals2
-                    # print(
-                    #     f"DEBUG: Data refreshed. Arrivals1 count: {len(current_arrivals1)}, Arrivals2 count: {len(current_arrivals2)}"
-                    # )
+
                 except Exception as e:
                     print(f"ERROR: API data fetch failed: {e}. Keeping old data.")
 
@@ -432,22 +421,20 @@ def main():
                     current_time_for_api_check  # Update API refresh time
                 )
 
-            # --- Display Drawing Logic ---
-            # This block runs every frame, drawing with current (possibly old) data
-            # Combine arrivals1 and arrivals2 if both are to be shown on the same board
-            # all_current_arrivals = current_arrivals1 + current_arrivals2
-            # Sort combined arrivals again for the display, as timeToStation changes
-            # This is important for "due" calculation being based on current time
-            all_current_arrivals_sorted = sorted(
-                current_arrivals1,
-                key=lambda p: p["arrival_time"].timestamp()
-                - time.time(),  # Sort by actual seconds remaining
+            after_api_fetch_time = time.monotonic()
+
+            print(
+                f"DEBUG: time to fetch API data: {after_api_fetch_time - loop_start_time:.3f}s"
             )
 
             draw_departure_board(
                 display,
-                all_current_arrivals_sorted,  # Pass the combined and re-sorted list
+                current_arrivals1,  # Pass the combined and re-sorted list
                 earliest_arrival=earliest_arrival_seconds,
+            )
+
+            print(
+                f"DEBUG: time to draw display: {time.monotonic() - after_api_fetch_time:.3f}s"
             )
 
             # --- Loop Timing and Control ---
