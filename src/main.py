@@ -341,9 +341,6 @@ def draw_arrival_lines(
             ypos = row_num * (font_size + row_padding) + yoffset
 
             if ypos >= max_y_for_arrivals:
-                print(
-                    f"DEBUG: Breaking arrival drawing: ypos {ypos} >= max_y_for_arrivals {max_y_for_arrivals}"
-                )
                 break
 
             destination_text = arrival["destination"]
@@ -392,9 +389,6 @@ def draw_arrival_lines(
                 text=combined_line_text,
                 font=font,
                 fill="yellow",
-            )
-            print(
-                f"DEBUG: Drawn arrival line {row_num+1} at y={ypos}: '{combined_line_text}'"
             )
             row_num += 1
 
