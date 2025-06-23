@@ -601,7 +601,7 @@ def main():
         print("DEBUG Main: Arrival Lines Worker started.")
 
         # --- Main Display Loop (TASK 1: Updates physical display) ---
-        TARGET_DISPLAY_FPS = 20
+        TARGET_DISPLAY_FPS = 5
         frame_time_budget = 1.0 / TARGET_DISPLAY_FPS
 
         while True:
