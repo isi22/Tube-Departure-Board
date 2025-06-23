@@ -144,6 +144,7 @@ def draw_departure_board(
     space_num_destination=13,
     yoffset=2,
     earliest_arrival=0,
+    font=font,
 ):
     with canvas(display) as draw:
 
@@ -432,6 +433,7 @@ def main():
                 display,
                 current_arrivals1,  # Pass the combined and re-sorted list
                 earliest_arrival=earliest_arrival_seconds,
+                font=ImageFont.load_default(),
             )
 
             print(
