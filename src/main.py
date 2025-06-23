@@ -279,7 +279,6 @@ def draw_clock(
     display_height: int,
     yoffset: int,
     fontBold: ImageFont.FreeTypeFont,
-    clock_display_rect: tuple,
 ):
     """
     Draws the live clock at the bottom of the display onto the given draw object.
@@ -288,12 +287,7 @@ def draw_clock(
 
     # Clear the entire clock display area on the buffer to black
     draw_obj.rectangle(
-        (
-            clock_display_rect[0],
-            clock_display_rect[1],
-            clock_display_rect[0] + clock_display_rect[2],
-            clock_display_rect[1] + clock_display_rect[3],
-        ),
+        clock_display_rect,
         fill="black",
     )
 
@@ -316,7 +310,6 @@ def draw_clock(
 def draw_arrival_lines(
     draw_obj: ImageDraw.ImageDraw,
     display_width: int,
-    display_height: int,
     arrivals: list,
     xoffset: int,
     row_padding: int,
@@ -324,8 +317,6 @@ def draw_arrival_lines(
     font_size: int,
     earliest_arrival_seconds: int,
     font: ImageFont.FreeTypeFont,
-    fontBold: ImageFont.FreeTypeFont,
-    arrivals_display_rect: tuple,  # This parameter is now correctly passed and used
 ):
     """
     Draws the list of arrival predictions on the main board area onto the global buffer.
@@ -333,16 +324,11 @@ def draw_arrival_lines(
     """
     # Clear the entire arrivals display area on the buffer to black
     draw_obj.rectangle(
-        (
-            arrivals_display_rect[0],
-            arrivals_display_rect[1],
-            arrivals_display_rect[0] + arrivals_display_rect[2],
-            arrivals_display_rect[1] + arrivals_display_rect[3],
-        ),
+        arrivals_display_rect,
         fill="black",
     )
 
-    max_y_for_arrivals = arrivals_display_rect[1] + arrivals_display_rect[3]
+    max_y_for_arrivals = arrivals_display_rect[3]
 
     row_num = 0
 
@@ -419,8 +405,7 @@ def draw_arrival_lines(
 
 def api_fetch_worker(
     station_info: dict,
-    lines1_filter: set,
-    lines2_filter: set,
+    lines_filter: set,
     earliest_arrival_seconds: int,
     refresh_interval_seconds: int,
 ):
@@ -433,15 +418,9 @@ def api_fetch_worker(
             print(
                 f"DEBUG API Fetch Worker: Fetching new raw API data at {get_current_london_datetime().strftime('%H:%M:%S')}..."
             )
-            new_arrivals1 = get_arrivals(
+            new_arrivals = get_arrivals(
                 station_info,
-                lines1_filter,
-                earliest_arrival_seconds,
-                _session=API_SESSION,
-            )
-            new_arrivals2 = get_arrivals(
-                station_info,
-                lines2_filter,
+                lines_filter,
                 earliest_arrival_seconds,
                 _session=API_SESSION,
             )
@@ -450,7 +429,7 @@ def api_fetch_worker(
                 # Clear any old data in queue, ensuring only the latest is available
                 while not raw_api_data_queue.empty():
                     raw_api_data_queue.get_nowait()
-                raw_api_data_queue.put_nowait((new_arrivals1, new_arrivals2))
+                raw_api_data_queue.put_nowait(new_arrivals)
                 print(
                     "DEBUG API Fetch Worker: New raw API data successfully put into queue."
                 )
@@ -467,12 +446,9 @@ def api_fetch_worker(
         time.sleep(refresh_interval_seconds)
 
 
-def render_worker(
+def arrival_lines_worker(
     display_props: dict,
-    lines1_filter: set,
-    lines2_filter: set,
     earliest_arrival_seconds: int,
-    render_worker_fps: int,
 ):
     """
     This thread is responsible for drawing all display elements onto an off-screen buffer.
@@ -486,70 +462,35 @@ def render_worker(
     render_draw_handle = ImageDraw.Draw(render_buffer)
 
     # Variables for state of arrivals data consumed from API Fetch Worker
-    current_arrivals1_data = []
-    current_arrivals2_data = []
+    current_arrivals_data = []
 
     # Timing for rendering arrivals (Task 2: e.g., 1 FPS)
-    last_arrivals_render_time = time.monotonic()
     arrivals_render_interval = 1.0
 
-    # Budget for this render worker's own frame rate (e.g., 10 FPS)
-    render_worker_frame_budget = 1.0 / render_worker_fps
-
-    # Pre-calculate estimated clock height for consistent layout
-    estimated_clock_height_plus_yoffset = (
-        fontBold.getbbox("00:00:00")[3] - fontBold.getbbox("00:00:00")[1]
-    ) + 2
-
-    # Display areas corresponding to arrival lines and clock
-    rect_arrival_lines = (
-        0,
-        0,
-        display_props["size"][0],
-        display_props["size"][1] - estimated_clock_height_plus_yoffset,
-    )
-
     while True:
-        frame_render_start_time = time.monotonic()
+
+        loop_start_time = time.monotonic()
 
         # --- Get latest raw API data (non-blocking) ---
         try:
-            new_arrivals1_api, new_arrivals2_api = raw_api_data_queue.get_nowait()
-            current_arrivals1_data = new_arrivals1_api
-            current_arrivals2_data = new_arrivals2_api
+            new_arrivals_api = raw_api_data_queue.get_nowait()
+            current_arrivals_data = new_arrivals_api
             print("DEBUG Render Worker: Consumed new raw API data from queue.")
         except queue.Empty:
             pass  # No new raw API data, use existing
 
-        # --- Draw Arrival Lines (conditional update based on interval, Task 2) ---
-        current_monotonic_time = time.monotonic()
-        if (
-            current_monotonic_time - last_arrivals_render_time
-            >= arrivals_render_interval
-        ):
-            all_current_arrivals_for_render = (
-                current_arrivals1_data + current_arrivals2_data
-            )
-            all_current_arrivals_sorted_for_render = sorted(
-                all_current_arrivals_for_render,
-                key=lambda p: p["arrival_time"].timestamp() - time.time(),
-            )
-
-            draw_arrival_lines(
-                render_draw_handle,
-                display_props["size"][0],
-                display_props["size"][1],
-                all_current_arrivals_sorted_for_render,
-                xoffset=15,
-                row_padding=3,
-                yoffset=2,
-                font_size=FONT_SIZE,
-                earliest_arrival_seconds=earliest_arrival_seconds,
-                font=font,
-                fontBold=fontBold,
-                arrivals_display_rect=rect_arrival_lines,  # Pass rect
-            )
-            last_arrivals_render_time = current_monotonic_time  # Reset render timer
+        # --- Draw Arrival Lines  ---
+        draw_arrival_lines(
+            render_draw_handle,
+            display_props["size"][0],
+            current_arrivals_data,
+            xoffset=15,
+            row_padding=3,
+            yoffset=2,
+            font_size=FONT_SIZE,
+            earliest_arrival_seconds=earliest_arrival_seconds,
+            font=font,
+        )
 
         # --- Put the completed frame COPY into the output queue for the main thread ---
         try:
@@ -559,7 +500,7 @@ def render_worker(
                 render_buffer.copy()
             )  # Put a COPY to avoid race conditions
             print(
-                f"DEBUG Render Worker: Rendered frame put into queue ({render_buffer.size})."
+                f"DEBUG Render Worker: display with updated arrival lines put into queue ({render_buffer.size})."
             )
         except queue.Full:
             print(
@@ -567,13 +508,13 @@ def render_worker(
             )
 
         # Sleep to control render worker's own FPS
-        render_duration = time.monotonic() - frame_render_start_time
-        sleep_time = render_worker_frame_budget - render_duration
+        render_duration = time.monotonic() - loop_start_time
+        sleep_time = arrivals_render_interval - render_duration
         if sleep_time > 0:
             time.sleep(sleep_time)
         else:
             print(
-                f"WARNING Render Worker: Took too long ({render_duration:.3f}s) for {render_worker_frame_budget:.3f}s budget."
+                f"WARNING Render Worker: Took too long ({render_duration:.3f}s) for {arrivals_render_interval:.3f}s budget."
             )
 
 
@@ -592,25 +533,41 @@ def main():
             print("DEBUG Main: Initializing Pygame emulator...")
             display_device = pygame(width=256, height=64, rotate=config.displayRotation)
 
+        # --- GLOBAL ARRIVAL LINES AND CLOCK RECTANGLES INITIALIZATION ---
+        global arrivals_display_rect, clock_display_rect
+        bbox_clock = fontBold.getbbox("00:00:00")
+        estimated_clock_height = (
+            bbox_clock[3] - bbox_clock[1]
+        ) + 2  # plus 2 for padding
+        arrivals_display_rect = (
+            0,
+            0,
+            display_device.size[0],
+            display_device.size[1] - estimated_clock_height,
+        )
+        clock_display_rect = (
+            0,
+            display_device.size[1] - estimated_clock_height,
+            display_device.size[0],
+            display_device.size[1],
+        )
+
         # --- GLOBAL DISPLAY OUTPUT BUFFER INITIALIZATION ---
         global display_output_buffer
         display_output_buffer = Image.new(display_device.mode, display_device.size)
 
         # --- Initial Data Fetch (Blocking, but only at startup) ---
         station_info = get_station_id(_session=API_SESSION)
-        lines1_filter = get_lines_filter(config.lines1)
-        lines2_filter = get_lines_filter(config.lines2)
+        lines_filter = get_lines_filter(config.lines1)
         earliest_arrival_seconds = config.earliest_arrival
 
         print("DEBUG Main: Fetching initial arrival data (main thread, blocking)...")
         # Initialize current_arrivals lists. These will be updated by the worker thread.
-        global current_arrivals1, current_arrivals2
-        current_arrivals1 = get_arrivals(
-            station_info, lines1_filter, earliest_arrival_seconds, _session=API_SESSION
+        global current_arrivals
+        current_arrivals = get_arrivals(
+            station_info, lines_filter, earliest_arrival_seconds, _session=API_SESSION
         )
-        current_arrivals2 = get_arrivals(
-            station_info, lines2_filter, earliest_arrival_seconds, _session=API_SESSION
-        )
+
         print("DEBUG Main: Initial arrival data fetched.")
 
         # --- Draw Initial Welcome Display ---
@@ -624,8 +581,7 @@ def main():
             target=api_fetch_worker,
             args=(
                 station_info,
-                lines1_filter,
-                lines2_filter,
+                lines_filter,
                 earliest_arrival_seconds,
                 config.refresh_interval,
             ),
@@ -633,27 +589,20 @@ def main():
         )
         api_fetch_thread.start()
         print("DEBUG Main: API Fetch Worker started.")
-
-        render_thread = threading.Thread(
-            target=render_worker,
+        arrival_lines_thread = threading.Thread(
+            target=arrival_lines_worker,
             args=(
                 {"mode": display_device.mode, "size": display_device.size},
-                lines1_filter,
-                lines2_filter,
                 earliest_arrival_seconds,
-                10,
             ),
             daemon=True,
         )
-        render_thread.start()
-        print("DEBUG Main: Render Worker started.")
+        arrival_lines_thread.start()
+        print("DEBUG Main: Arrival Lines Worker started.")
 
         # --- Main Display Loop (TASK 1: Updates physical display) ---
         TARGET_DISPLAY_FPS = 10
         frame_time_budget = 1.0 / TARGET_DISPLAY_FPS
-
-        last_debug_print_time = time.monotonic()
-        debug_print_interval = 5.0
 
         while True:
             loop_start_time = time.monotonic()
@@ -670,15 +619,6 @@ def main():
                 # --- Draw Clock (always redraw, part of Task 1 preparation) ---
 
             render_draw_handle = ImageDraw.Draw(display_output_buffer)
-            estimated_clock_height_plus_yoffset = (
-                fontBold.getbbox("00:00:00")[3] - fontBold.getbbox("00:00:00")[1]
-            ) + 2
-            rect_clock = (
-                0,
-                display_device.size[1] - estimated_clock_height_plus_yoffset,
-                display_device.size[0],
-                display_device.size[1],
-            )
 
             draw_clock(
                 render_draw_handle,
@@ -686,7 +626,6 @@ def main():
                 display_device.size[1],
                 2,
                 fontBold,
-                clock_display_rect=rect_clock,
             )  # yoffset=2
 
             # --- PHYSICAL DISPLAY UPDATE (TASK 1) ---
