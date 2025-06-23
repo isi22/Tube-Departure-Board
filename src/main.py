@@ -10,7 +10,6 @@ import math
 import pytz
 import threading
 import queue
-import RPi.GPIO as GPIO
 
 from PIL import ImageFont, ImageDraw, Image
 from luma.core.render import canvas
@@ -22,6 +21,7 @@ if sys.platform.startswith("linux") and os.uname().machine.startswith("arm"):
     try:
         from luma.core.interface.serial import spi
         from luma.oled.device import ssd1322
+        import RPi.GPIO as GPIO
 
         IS_RASPBERRY_PI = True
     except ImportError:
