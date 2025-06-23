@@ -147,6 +147,8 @@ def draw_departure_board(
     earliest_arrival=0,
 ):
     with canvas(display) as draw:
+
+        start_of_display_time = time.monotonic()
         # Draw the live clock first
         london_tz = pytz.timezone("Europe/London")
         current_london_time = datetime.now(london_tz)
@@ -172,7 +174,12 @@ def draw_departure_board(
             clock_height + yoffset + FONT_SIZE + row_padding
         )  # Space above clock
 
+        print(
+            f"DEBUG: time to draw clock: {time.monotonic() - start_of_display_time:.3f}s"
+        )
+
         for arrival in arrivals:
+            start_row_time = time.monotonic()
             time_to_arrival, time_width, display_check = get_time_to_arrival(
                 arrival, font, earliest_arrival
             )
@@ -202,6 +209,10 @@ def draw_departure_board(
                     fill="yellow",
                 )
                 row_num += 1
+
+                print(
+                    f"DEBUG: time to draw row {row_num}: {time.monotonic() - start_row_time:.3f}s"
+                )
 
 
 def query_TFL(url: str, params: dict = None, max_retries: int = 3):
