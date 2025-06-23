@@ -22,3 +22,5 @@ display_settings = {
 }
 
 fontSize = 10  # Font size for the display, 10 is a good size for 128x64 displays
+
+switch_GPIO_pin = 17
