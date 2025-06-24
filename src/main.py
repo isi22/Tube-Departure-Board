@@ -38,7 +38,8 @@ fontBold: ImageFont.FreeTypeFont = None
 
 # --- GLOBAL API SESSION & QUEUES FOR THREAD COMMUNICATION ---
 API_SESSION = requests.Session()
-raw_api_data_queue = queue.Queue(maxsize=1)
+raw_api_data_queue1 = queue.Queue(maxsize=1)
+raw_api_data_queue2 = queue.Queue(maxsize=1)
 rendered_frames_queue = queue.Queue(maxsize=1)
 
 # --- GLOBAL BUFFER FOR FINAL DISPLAY OUTPUT ---
@@ -382,25 +383,28 @@ def api_fetch_worker(
                 f"DEBUG API Fetch Worker: Fetching new raw API data at {datetime.now().strftime('%H:%M:%S')}..."
             )
 
-            if IS_RASPBERRY_PI:
-                if GPIO.input(config.switch_GPIO_pin):
-                    lines_filter = lines_filter1
-                else:
-                    lines_filter = lines_filter2
-            else:
-                lines_filter = lines_filter1
-
-            new_arrivals = get_arrivals(
+            new_arrivals1 = get_arrivals(
                 station_info,
-                lines_filter,
+                lines_filter1,
+                _session=API_SESSION,
+            )
+
+            new_arrivals2 = get_arrivals(
+                station_info,
+                lines_filter2,
                 _session=API_SESSION,
             )
 
             try:
                 # Clear any old data in queue, ensuring only the latest is available
-                while not raw_api_data_queue.empty():
-                    raw_api_data_queue.get_nowait()
-                raw_api_data_queue.put_nowait(new_arrivals)
+                while not raw_api_data_queue1.empty():
+                    raw_api_data_queue1.get_nowait()
+                raw_api_data_queue1.put_nowait(new_arrivals1)
+
+                while not raw_api_data_queue2.empty():
+                    raw_api_data_queue2.get_nowait()
+                raw_api_data_queue2.put_nowait(new_arrivals1)
+
                 print(
                     "DEBUG API Fetch Worker: New raw API data successfully put into queue."
                 )
@@ -430,7 +434,8 @@ def arrival_lines_worker():
     render_draw_handle = ImageDraw.Draw(render_buffer)
 
     # Variables for state of arrivals data consumed from API Fetch Worker
-    current_arrivals_data = []
+    current_arrivals1 = []
+    current_arrivals2 = []
 
     # Timing for rendering arrivals (Task 2: e.g., 1 FPS)
     arrivals_render_interval = 1.0
@@ -441,16 +446,24 @@ def arrival_lines_worker():
 
         # --- Get latest raw API data (non-blocking) ---
         try:
-            new_arrivals_api = raw_api_data_queue.get_nowait()
-            current_arrivals_data = new_arrivals_api
+            current_arrivals1 = raw_api_data_queue1.get_nowait()
+            current_arrivals2 = raw_api_data_queue2.get_nowait()
             print("DEBUG Render Worker: Consumed new raw API data from queue.")
         except queue.Empty:
             pass  # No new raw API data, use existing
 
         # --- Draw Arrival Lines  ---
+        if IS_RASPBERRY_PI:
+            if GPIO.input(config.switch_GPIO_pin):
+                current_arrivals = current_arrivals1
+            else:
+                current_arrivals = current_arrivals2
+        else:
+            current_arrivals = current_arrivals1
+
         draw_arrival_lines(
             render_draw_handle,
-            current_arrivals_data,
+            current_arrivals,
             font=font,
         )
 
@@ -461,8 +474,9 @@ def arrival_lines_worker():
             rendered_frames_queue.put_nowait(
                 render_buffer.copy()
             )  # Put a COPY to avoid race conditions
+
             print(
-                f"DEBUG Render Worker: display with updated arrival lines put into queue ({render_buffer.size})."
+                f"DEBUG Render Worker: display with updated arrival lines put into queue."
             )
         except queue.Full:
             print(
