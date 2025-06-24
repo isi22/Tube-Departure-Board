@@ -163,12 +163,12 @@ def get_arrivals(
     _session: requests.Session = None,
 ) -> list:
     try:
-        # TFL_STOPPOINT_ARRIVALS_URL = (
-        #     "https://api.tfl.gov.uk/StopPoint/" + station["id"] + "/Arrivals"
-        # )
         TFL_STOPPOINT_ARRIVALS_URL = (
-            "https://api.tfl.gov.uk/Line/district/Arrivals/" + station["id"]
+            "https://api.tfl.gov.uk/StopPoint/" + station["id"] + "/Arrivals"
         )
+        # TFL_STOPPOINT_ARRIVALS_URL = (
+        #     "https://api.tfl.gov.uk/Line/district/Arrivals/" + station["id"]
+        # )
 
         params = {
             "app_key": config.api_key,
