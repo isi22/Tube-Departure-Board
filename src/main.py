@@ -40,7 +40,9 @@ fontBold: ImageFont.FreeTypeFont = None
 API_SESSION = requests.Session()
 raw_api_data_queue1 = queue.Queue(maxsize=1)
 raw_api_data_queue2 = queue.Queue(maxsize=1)
-rendered_frames_queue = queue.Queue(maxsize=1)
+# rendered_frames_queue = queue.Queue(maxsize=1)
+rendered_frames_queue1 = queue.Queue(maxsize=1)
+rendered_frames_queue2 = queue.Queue(maxsize=1)
 
 # --- GLOBAL BUFFER FOR FINAL DISPLAY OUTPUT ---
 display_output_buffer: Image.Image = None
@@ -430,15 +432,19 @@ def arrival_lines_worker():
     """
 
     # Private buffer and drawing handle for this worker thread
-    render_buffer = Image.new(display_device.mode, display_device.size)
-    render_draw_handle = ImageDraw.Draw(render_buffer)
+    # render_buffer = Image.new(display_device.mode, display_device.size)
+    # render_draw_handle = ImageDraw.Draw(render_buffer)
+    render_buffer1 = Image.new(display_device.mode, display_device.size)
+    render_draw_handle1 = ImageDraw.Draw(render_buffer1)
+    render_buffer2 = Image.new(display_device.mode, display_device.size)
+    render_draw_handle2 = ImageDraw.Draw(render_buffer2)
 
     # Variables for state of arrivals data consumed from API Fetch Worker
     current_arrivals1 = []
     current_arrivals2 = []
 
-    # Timing for rendering arrivals (Task 2: e.g., 1 FPS)
-    arrivals_render_interval = 1.0
+    # Timing for rendering arrivals (Task 2: e.g., 0.5 FPS)
+    arrivals_render_interval = 2.0
 
     while True:
 
@@ -453,28 +459,50 @@ def arrival_lines_worker():
             pass  # No new raw API data, use existing
 
         # --- Draw Arrival Lines  ---
-        if IS_RASPBERRY_PI:
-            if GPIO.input(config.switch_GPIO_pin):
-                current_arrivals = current_arrivals1
-                print("switch = eastbound")
-            else:
-                current_arrivals = current_arrivals2
-                print("switch = eastbound")
-        else:
-            current_arrivals = current_arrivals1
+        # if IS_RASPBERRY_PI:
+        #     if GPIO.input(config.switch_GPIO_pin):
+        #         current_arrivals = current_arrivals1
+        #         print("switch = eastbound")
+        #     else:
+        #         current_arrivals = current_arrivals2
+        #         print("switch = westbound")
+        # else:
+        #     current_arrivals = current_arrivals1
+
+        # draw_arrival_lines(
+        #     render_draw_handle,
+        #     current_arrivals,
+        #     font=font,
+        # )
 
         draw_arrival_lines(
-            render_draw_handle,
-            current_arrivals,
+            render_draw_handle1,
+            current_arrivals1,
+            font=font,
+        )
+
+        draw_arrival_lines(
+            render_draw_handle2,
+            current_arrivals2,
             font=font,
         )
 
         # --- Put the completed frame COPY into the output queue for the main thread ---
         try:
-            while not rendered_frames_queue.empty():
-                rendered_frames_queue.get_nowait()
-            rendered_frames_queue.put_nowait(
-                render_buffer.copy()
+            # while not rendered_frames_queue.empty():
+            #     rendered_frames_queue.get_nowait()
+            # rendered_frames_queue.put_nowait(
+            #     render_buffer.copy()
+            # )  # Put a COPY to avoid race conditions
+            while not rendered_frames_queue1.empty():
+                rendered_frames_queue1.get_nowait()
+            rendered_frames_queue1.put_nowait(
+                render_buffer1.copy()
+            )  # Put a COPY to avoid race conditions
+            while not rendered_frames_queue2.empty():
+                rendered_frames_queue2.get_nowait()
+            rendered_frames_queue2.put_nowait(
+                render_buffer2.copy()
             )  # Put a COPY to avoid race conditions
 
             print(
@@ -607,7 +635,18 @@ def main():
 
             # --- Get new rendered frame from Render Worker (Non-blocking) ---
             try:
-                new_rendered_frame = rendered_frames_queue.get_nowait()
+                if IS_RASPBERRY_PI:
+                    if GPIO.input(config.switch_GPIO_pin):
+                        new_rendered_frame = rendered_frames_queue1.get_nowait()
+                        print("switch = eastbound")
+                    else:
+                        new_rendered_frame = rendered_frames_queue2.get_nowait()
+                        print("switch = westbound")
+                else:
+                    new_rendered_frame = rendered_frames_queue1.get_nowait()
+
+                # new_rendered_frame = rendered_frames_queue.get_nowait()
+
                 # Paste the new frame onto the display_output_buffer
                 display_output_buffer.paste(new_rendered_frame, (0, 0))
                 print("DEBUG Main: Consumed new rendered frame from Render Worker.")
