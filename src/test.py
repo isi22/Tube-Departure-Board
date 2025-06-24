@@ -1,55 +1,55 @@
-# test_luma_pygame.py
+import config
+import json
+import requests
 import time
-import sys
-import os  # For os.uname().machine, if needed by the luma import logic
 
-# Conditional import just like in your main script to be sure
-if sys.platform.startswith("linux") and os.uname().machine.startswith("arm"):
-    # This path shouldn't be taken on your desktop, but ensures the import consistency
-    try:
-        # Dummy pygame for Pi branch
-        from luma.emulator.device import pygame
-    except ImportError:
 
-        class pygame:
-            def __init__(self, *args, **kwargs):
-                pass
+def query_TFL(
+    url: str,
+    params: dict = None,
+    max_retries: int = 3,
+    _session: requests.Session = None,
+) -> list:
+    session_to_use = _session if _session else requests.Session()
+    for retry_attempt in range(max_retries):
+        try:
+            response = session_to_use.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            json_response = response.json()
+            return json_response if json_response else []
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+            print(
+                f"Error calling TfL API (Attempt {retry_attempt + 1}/{max_retries}): {e}"
+            )
+            if retry_attempt == max_retries - 1:
+                raise RuntimeError(
+                    f"Failed to fetch data from {url} after {max_retries} retries: {e}"
+                )
+        time.sleep(1)
+    return []
 
-            def command(self, *args, **kwargs):
-                pass
 
-else:
-    # This is the path for your emulator
-    from luma.emulator.device import pygame
+vehicle_id = "025"
+url1 = "https://api.tfl.gov.uk/Vehicle/" + vehicle_id + "/Arrivals"
 
-from luma.core.render import canvas
-from PIL import ImageDraw  # Not strictly needed if you only draw in canvas context
 
-try:
-    print("DEBUG: Attempting to create luma.emulator.device.pygame display...")
-    # Instantiate the luma pygame device
-    # Use generic width/height/rotation to rule out config issues
-    display = pygame(width=128, height=64, rotate=0)
-    print("DEBUG: luma.emulator.device.pygame display object created.")
+url2 = "https://api.tfl.gov.uk/StopPoint/Search"
+params2 = {
+    "query": "victoria",
+    "modes": "tube",
+    "maxResults": 1,
+    "app_key": config.api_key,
+}
 
-    # Draw something on the display using luma's canvas context
-    print("DEBUG: Drawing 'Hello Luma!' to the canvas...")
-    with canvas(display) as draw:
-        # Drawing in yellow for visibility
-        draw.text((10, 10), text="Hello Luma!", fill="yellow")
-        draw.text((10, 30), text="Test Display", fill="yellow")
-    print("DEBUG: Drawing completed. Window should be visible now.")
+station_id_monument = "940GZZLUMMT"
+station_id_victoria = "HUBVIC"
+station_id_chiswickpark = "940GZZLUCWP"
+url3 = "https://api.tfl.gov.uk/StopPoint/" + station_id_chiswickpark + "/Arrivals"
 
-    # Keep the window open for 5 seconds
-    print("DEBUG: Keeping window open for 5 seconds...")
-    time.sleep(5)
+params = {
+    "app_key": config.api_key,
+}
 
-    # Clean up the display (closes the window)
-    print("DEBUG: Calling display.cleanup()...")
-    display.cleanup()
-    print("DEBUG: Display cleaned up. Exiting.")
-
-except Exception as e:
-    print(f"ERROR: An error occurred in minimal Luma Pygame test: {e}")
-    # In case of error, sleep to let user see output before terminal closes
-    time.sleep(2)
+print(params)
+response = query_TFL(url1, params)
+print(json.dumps(response, indent=2))

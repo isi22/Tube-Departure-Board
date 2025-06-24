@@ -167,11 +167,15 @@ def get_arrivals(
         #     "https://api.tfl.gov.uk/StopPoint/" + station["id"] + "/Arrivals"
         # )
         TFL_STOPPOINT_ARRIVALS_URL = (
-            "https://api.tfl.gov.uk/Line/piccadilly,district/Arrivals/" + station["id"]
+            "https://api.tfl.gov.uk/Line/district/Arrivals/" + station["id"]
         )
 
-        all_arrivals = query_TFL(TFL_STOPPOINT_ARRIVALS_URL, _session=_session)
-        # print(all_arrivals)
+        params = {
+            "app_key": config.api_key,
+        }
+        print(params)
+        all_arrivals = query_TFL(TFL_STOPPOINT_ARRIVALS_URL, params, _session=_session)
+        # print(json.dumps(all_arrivals, indent=2))
         if not isinstance(all_arrivals, list):
             return []
         filtered_predictions = [
