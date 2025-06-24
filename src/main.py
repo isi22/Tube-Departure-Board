@@ -403,7 +403,7 @@ def api_fetch_worker(
 
                 while not raw_api_data_queue2.empty():
                     raw_api_data_queue2.get_nowait()
-                raw_api_data_queue2.put_nowait(new_arrivals1)
+                raw_api_data_queue2.put_nowait(new_arrivals2)
 
                 print(
                     "DEBUG API Fetch Worker: New raw API data successfully put into queue."
@@ -456,8 +456,10 @@ def arrival_lines_worker():
         if IS_RASPBERRY_PI:
             if GPIO.input(config.switch_GPIO_pin):
                 current_arrivals = current_arrivals1
+                print("switch = eastbound")
             else:
                 current_arrivals = current_arrivals2
+                print("switch = eastbound")
         else:
             current_arrivals = current_arrivals1
 
