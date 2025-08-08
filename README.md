@@ -11,7 +11,6 @@
  <img alt="Python" src="https://img.shields.io/badge/-Python-3776AB?logo=python&logoColor=white&style=flat-square" />
  <img alt="Raspberrypi" src="https://img.shields.io/badge/-Raspberry%20Pi-C51A4A?logo=raspberry-pi&logoColor=white&style=flat-square" />
  <img alt="Tfl" src="https://img.shields.io/badge/-TfL-000f9f.svg?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjRweCIgaGVpZ2h0PSIyNHB4IiB2aWV3Qm94PSIwIDAgMjQgMjQiIHJvbGU9ImltZyIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDx0aXRsZT5UcmFuc3BvcnQgZm9yIExvbmRvbiBpY29uPC90aXRsZT4KICAgIDxwYXRoIGZpbGw9IiNmZmZmZmYiIGQ9Ik0xMiAyLjI1YTkuNzMgOS43MyAwIDAgMC05LjQ5IDcuNUgwdjQuNWgyLjUxYTkuNzMgOS43MyAwIDAgMCA5LjQ5IDcuNWM0LjYyIDAgOC40OC0zLjIgOS40OS03LjVIMjR2LTQuNWgtMi41MUE5LjczIDkuNzMgMCAwIDAgMTIgMi4yNXpNMTIgNmMyLjUgMCA0LjY2IDEuNTYgNS41NiAzLjc1SDYuNDRBNi4wMiA2LjAyIDAgMCAxIDEyIDZ6bS01LjU2IDguMjVoMTEuMTJBNi4wMiA2LjAyIDAgMCAxIDEyIDE4YTYuMDIgNi4wMiAwIDAgMS01LjU2LTMuNzVaIiAvPgo8L3N2Zz4=&logoColor=white&style=flat-square" />
-
 </p>
 <!--- End of badges -->
 
