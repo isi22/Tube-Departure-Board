@@ -23,7 +23,7 @@ Recreate the iconic London Underground departure board with a Raspberry Pi! This
 <!--- End of Thumbnail-->
 
 <div style="text-align:center;">
-    <img src="Images/banner.jpg" alt="Miniature Tube Departure Board" style="max-height: 150px;">
+    <img src="Images/banner.jpg" alt="Miniature Tube Departure Board"">
 </div>
 
 Recreate the iconic London Underground departure board with a Raspberry Pi! This Python-based application fetches live train data from the Transport for London (TfL) Unified API and displays it in real-time on a compact OLED screen, designed to mimic the classic dot-matrix look. 
